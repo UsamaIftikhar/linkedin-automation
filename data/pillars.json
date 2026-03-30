@@ -1,0 +1,98 @@
+[
+  {
+    "id": "scope-blocks-backend",
+    "audience": "teams shipping APIs on AWS",
+    "problem": "Backend work stalls while people wait for a frozen scope doc, even though the architecture path is already obvious.",
+    "persists": "OpenAPI sketches, the Postgres schema direction, and the first deploy target are knowable early, but nothing ships until paperwork catches up.",
+    "principle": "Define narrow API contracts, deploy a thin service behind an ALB or API Gateway, run Prisma or Flyway migrations against Postgres in CI, and promote the same GitHub Actions artifact through dev before the scope is declared final.",
+    "cta": "When scope lags, do you ship contracts first, a thin service first, or something else?"
+  },
+  {
+    "id": "ci-cd-truth",
+    "audience": "platform and backend engineers",
+    "problem": "Production surprises keep showing up because the pipeline does not enforce the checks that actually matter.",
+    "persists": "Tests stay optional on pull requests, migrations run with different env vars in GitHub Actions than in ECS or EC2 prod, and nobody treats the workflow as the source of truth for releasable images.",
+    "principle": "Require green checks on main, build one OCI image per commit, deploy through explicit stages, and wire CloudWatch alarms to the same latency and error metrics I watch right after rollout.",
+    "cta": "What is the one check you refuse to skip on main?"
+  },
+  {
+    "id": "iot-telemetry-path",
+    "audience": "engineers on devices plus cloud",
+    "problem": "Device telemetry looks fine in the lab, then breaks under flaky networks and bursty publish rates.",
+    "persists": "MQTT QoS, Kinesis retention, and Lambda concurrency limits stay undocumented until dropped messages show up in CloudWatch.",
+    "principle": "Publish over MQTT into AWS IoT Core, forward with rules into Kinesis, consume with Lambda writers that use idempotent keys in DynamoDB or Postgres, and chart consumer lag and error rates in CloudWatch before doubling device count.",
+    "cta": "What failed first for you: connectivity, ordering, or downstream overload?"
+  },
+  {
+    "id": "digitalocean-tradeoff",
+    "audience": "teams choosing pragmatic cloud platforms",
+    "problem": "Teams over-design infrastructure when a simpler DigitalOcean setup would have shipped faster.",
+    "persists": "People jump straight to multi-service cloud patterns before they know if the workload needs more than a droplet, managed Postgres, and a load balancer.",
+    "principle": "Start with one app service or droplet, managed Postgres, object storage, and backups; add Redis, workers, or Kubernetes only when latency, queue depth, or noisy-neighbor issues show up in metrics.",
+    "cta": "Where do you draw the line between a simple platform setup and full cloud sprawl?"
+  },
+  {
+    "id": "bitbucket-pipelines-gates",
+    "audience": "teams using Bitbucket or mixed CI stacks",
+    "problem": "Release confidence stays low when Bitbucket Pipelines only builds code but does not verify deployment behavior.",
+    "persists": "A green pipeline can still hide migration order issues, broken environment variables, and container drift between staging and production.",
+    "principle": "Use Bitbucket Pipelines to build one immutable image, run migrations in a controlled step, gate deploys behind smoke tests, and fail the rollout if health checks or synthetic probes degrade.",
+    "cta": "What is the missing gate in your CI/CD pipeline today?"
+  },
+  {
+    "id": "vercel-python-cron",
+    "audience": "teams combining frontend and serverless backends",
+    "problem": "Scheduled workflows look easy until frontend hosting, Python functions, and external cron triggers start drifting out of sync.",
+    "persists": "People assume Vercel scheduling covers every case, then discover they still need cron-job.org or another external trigger for timezone control, retries, or protected endpoints.",
+    "principle": "Keep the UI on Next.js, isolate Python functions behind authenticated routes, trigger them from cron-job.org with a shared secret, and log each scheduled execution so missed runs are visible before users notice.",
+    "cta": "Do you prefer platform-native scheduling or external cron services for reliability?"
+  },
+  {
+    "id": "railway-deploy-drift",
+    "audience": "small teams moving quickly with managed platforms",
+    "problem": "Railway or Vercel deployments feel effortless until config drift makes the app behave differently across preview, staging, and production.",
+    "persists": "Managed platforms reduce setup time, but secrets, build flags, and background jobs still need the same rigor as any other environment.",
+    "principle": "Treat Railway services like any other environment: pin runtime versions, verify migration order, document env vars, and keep background workers separate from the web process so failures are easier to isolate.",
+    "cta": "What bites you more on managed platforms: secrets, build config, or background jobs?"
+  },
+  {
+    "id": "frontend-architecture-boundary",
+    "audience": "frontend and full-stack engineers",
+    "problem": "Frontend performance problems often come from weak boundaries, not from React itself.",
+    "persists": "Teams mix server concerns, client state, and API orchestration in the same component tree until rerenders and loading logic become hard to reason about.",
+    "principle": "Use clear server/client boundaries in Next.js, keep expensive fetching on the server where possible, push mutations behind stable API routes, and measure hydration cost before blaming the framework.",
+    "cta": "What frontend boundary improved your app the most recently?"
+  },
+  {
+    "id": "ollama-local-models",
+    "audience": "engineers experimenting with local AI workflows",
+    "problem": "Local LLM demos look impressive until memory limits, latency, and model quality make the workflow unusable for real users.",
+    "persists": "People treat Ollama like a drop-in cloud replacement without measuring prompt size, GPU availability, or whether Mistral-class models are good enough for the task.",
+    "principle": "Use Ollama for controlled local inference, keep prompts compact, benchmark Mistral or DeepSeek variants against the exact task, and move to hosted inference only after you know what throughput and quality you actually need.",
+    "cta": "Where do you draw the line between local inference and hosted model APIs?"
+  },
+  {
+    "id": "model-routing-architecture",
+    "audience": "teams building AI-assisted products",
+    "problem": "AI features become expensive fast when every request is sent to the strongest model by default.",
+    "persists": "Without routing rules, lightweight classification, retrieval, and formatting tasks get mixed with deeper reasoning work that should go to a different model tier.",
+    "principle": "Route simple tasks to faster models, reserve deeper reasoning for harder prompts, store prompt versions alongside outputs, and log latency plus fallback behavior so model choices stay explainable.",
+    "cta": "Do you route AI tasks by cost, latency, or quality first?"
+  },
+  {
+    "id": "nvidia-inference-serving",
+    "audience": "teams serving models in production",
+    "problem": "Inference stacks fail under load when GPU utilization, batching, and request timeouts are treated like afterthoughts.",
+    "persists": "A model endpoint can look healthy in testing while still collapsing in production because queueing, warmup, and concurrency limits were never measured.",
+    "principle": "Whether you use NVIDIA NIM or a custom container, measure token throughput, cap concurrency, define timeout behavior, and keep a smaller fallback model ready before exposing the endpoint to user traffic.",
+    "cta": "What was the first real bottleneck you hit in model serving?"
+  },
+  {
+    "id": "architecture-boundaries",
+    "audience": "engineers designing multi-service systems",
+    "problem": "Architecture gets harder to change when service boundaries are drawn around teams instead of around failure modes and data ownership.",
+    "persists": "A clean diagram can still hide chatty APIs, duplicated logic, and unclear ownership of state transitions.",
+    "principle": "Draw boundaries around the write path, data ownership, and blast radius first; then choose queues, webhooks, or synchronous APIs based on latency and recovery requirements instead of diagram aesthetics.",
+    "cta": "What architectural boundary did you wish you had changed earlier?"
+  }
+]
