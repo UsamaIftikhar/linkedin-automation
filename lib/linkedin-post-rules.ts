@@ -225,6 +225,49 @@ export function hasNonTechnicalFraming(prose: string): string | null {
   return null;
 }
 
+const OVER_POLISHED_PHRASES = [
+  "single, authoritative path",
+  "authoritative path",
+  "tight feedback loop",
+  "paradigm shift",
+  "best-in-class",
+  "world-class",
+  "seamless",
+  "robust solution",
+  "core issue was",
+  "key operational detail",
+] as const;
+
+export function hasOverPolishedPhrasing(prose: string): string | null {
+  const t = prose.toLowerCase();
+  const hit = OVER_POLISHED_PHRASES.find((phrase) => t.includes(phrase));
+  if (hit) {
+    return `Phrase sounds too polished or corporate ("${hit}"). Rewrite in simpler engineering language.`;
+  }
+  if (/turns?\s+[^.]{0,40}\s+into\s+[^.]{0,40}/i.test(prose)) {
+    return "Closing sounds slogan-like ('turns X into Y'). Prefer a plainer takeaway.";
+  }
+  return null;
+}
+
+export function hasDenseParagraph(prose: string): string | null {
+  const paragraphs = prose
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  for (const paragraph of paragraphs) {
+    const words = countWords(paragraph);
+    const sentenceCount = paragraph
+      .split(/[.!?]+/)
+      .map((part) => part.trim())
+      .filter(Boolean).length;
+    if (words > 70 || sentenceCount > 4) {
+      return "A paragraph is too dense. Split long blocks into shorter paragraphs or bullets.";
+    }
+  }
+  return null;
+}
+
 export function hasStrongHook(prose: string): boolean {
   const lines = prose.split(/\n/).map((l) => l.trim()).filter(Boolean);
   const first = (lines[0] ?? "").toLowerCase();
@@ -232,10 +275,48 @@ export function hasStrongHook(prose: string): boolean {
     return false;
   }
   const firstWords = first.split(/\s+/).filter(Boolean);
-  if (firstWords.length <= 10 && /[.!?]$/.test(first)) {
+  if (firstWords.length <= 16 && /[.!?]$/.test(first)) {
+    return true;
+  }
+  const openingParagraph = lines.slice(0, 2).join(" ").toLowerCase();
+  const openingWordCount = countWords(openingParagraph);
+  const openingHasTechSignal = TECH_KEYWORDS.some((keyword) =>
+    openingParagraph.includes(keyword.toLowerCase()),
+  );
+  const openingHasTension =
+    /\b(kept|hitting|hit|broke|breaks|failed|failure|stall|stalled|drift|drifted|surprise|surprises|spike|spiked|latency|cost|slow|rollback|retry|incident|problem|issue|mismatch|constraint|overload)\b/.test(
+      openingParagraph,
+    );
+  if (
+    openingWordCount <= 36 &&
+    /[.!?]$/.test(openingParagraph) &&
+    (openingHasTension || (openingHasTechSignal && /^(i|we)\b/.test(openingParagraph)))
+  ) {
+    return true;
+  }
+  if (
+    openingWordCount <= 28 &&
+    /[.!?]$/.test(openingParagraph) &&
+    (
+      openingParagraph.includes("production") ||
+      openingParagraph.includes("deploy") ||
+      openingParagraph.includes("release") ||
+      openingParagraph.includes("latency") ||
+      openingParagraph.includes("cost") ||
+      openingParagraph.includes("pipeline") ||
+      openingParagraph.includes("scaling") ||
+      openingParagraph.includes("drift") ||
+      openingParagraph.includes("surprise") ||
+      openingParagraph.includes("trade-off") ||
+      openingParagraph.includes("tradeoff")
+    )
+  ) {
     return true;
   }
   return (
+    first.includes("kept hitting") ||
+    first.includes("too many") ||
+    first.includes("surprise") ||
     first.includes("mistake") ||
     first.includes("problem") ||
     first.includes("issue") ||
@@ -384,6 +465,16 @@ export function lintLinkedInPost(text: string): PostLintResult {
   const framing = hasNonTechnicalFraming(prose);
   if (framing) {
     issues.push(framing);
+  }
+
+  const polished = hasOverPolishedPhrasing(prose);
+  if (polished) {
+    issues.push(polished);
+  }
+
+  const density = hasDenseParagraph(prose);
+  if (density) {
+    issues.push(density);
   }
 
   return {

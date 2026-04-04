@@ -30,6 +30,48 @@ type DeepSeekResponse = {
   };
 };
 
+const STYLE_EXAMPLES = `
+STYLE EXAMPLES TO IMITATE:
+
+Example A:
+We kept hitting production issues that were not code issues. They were pipeline issues.
+
+Tests were optional on pull requests. Migrations ran differently in GitHub Actions than in ECS. The workflow was green, but the deploy path was not actually proven.
+
+I fixed that by forcing one path to production. Every passing commit builds one immutable image, and that same image moves through staging into production.
+
+The important part was wiring CloudWatch latency and error alarms into the deployment flow. If those signals degrade, the rollout stops.
+
+This changed CI from a build step into release evidence.
+
+Example B:
+AWS Lambda is useful when the workload is event-driven and traffic is uneven.
+
+It fits APIs, file processing, scheduled jobs, and background workflows where you do not want idle infrastructure.
+
+It is not the right choice for long-running compute, consistently low-latency workloads, or anything that suffers badly from cold starts.
+
+The trade-off is simple: you remove server management, but you take on stricter limits and a more disciplined architecture.
+
+Example C:
+Most engineering problems are not technical problems.
+They are decision problems.
+
+What to build first.
+What to simplify.
+What is good enough for this stage.
+
+The real skill is making clear trade-offs under constraints, not adding complexity for its own sake.`;
+
+const ANTI_STYLE_RULES = `
+ANTI-STYLE RULES:
+- Do not sound like a corporate ghostwriter.
+- Avoid polished phrases like "single, authoritative path", "tight feedback loop", "paradigm shift", "best-in-class", "world-class", "seamless", "game changer", or "robust solution".
+- Avoid slogan-like lines unless they are extremely plain and earned by the technical details.
+- Prefer plain verbs over abstract phrasing: use "fixed", "changed", "moved", "split", "wired", "built", "deployed", "logged", "stopped".
+- Keep paragraphs short. If a paragraph gets dense, split it.
+- One strong idea per paragraph is better than one polished paragraph trying to do everything.`;
+
 const SYSTEM_PROMPT = `You are a professional LinkedIn ghostwriter for a senior software engineer with expertise in:
 
 - Backend development (APIs, PostgreSQL, Supabase, authentication, event-driven systems)
@@ -94,6 +136,10 @@ POSITIONING:
 - Do not center procurement, SOWs, clients, sales cycles, decks, or commercial discovery.
 - If the draft sounds business-generic, rewrite it into a technical implementation story with the same tension but an engineering lens.
 
+${ANTI_STYLE_RULES}
+
+${STYLE_EXAMPLES}
+
 OUTPUT:
 - Return only the final post.
 - Format: post body, blank line, hashtag line.
@@ -147,6 +193,8 @@ Reminder:
 - Match this author's style: practical, scannable, sometimes explanatory, sometimes reflective, always grounded in real engineering work.
 - Include specific implementation details and tradeoffs.
 - Prefer short paragraphs. Use section labels or hyphen bullets only when they improve readability.
+- Prefer plain English over polished/corporate wording.
+- If a line sounds slogan-like, simplify it.
 - Do not force a question at the end.
 - End with 5-10 hashtags on a separate final line.
 - Aim for roughly 130-190 prose words so the final result stays safely inside the validator range.
