@@ -70,6 +70,7 @@ async function generateDeepSeekPost(options: {
   domainFocus: string;
   postType: PostType;
   postTypeGuidance: string;
+  formatGuidance: string;
 }): Promise<{ text: string; attempts: number }> {
   let attempts = 1;
   let text = await polishWithDeepSeek(options);
@@ -79,7 +80,7 @@ async function generateDeepSeekPost(options: {
     attempts += 1;
     const revisionNotes = `The previous draft failed validation with these issues: ${lint.issues.join(
       "; ",
-    )}. Rewrite the whole post so it passes every rule. Keep the prose between 145 and 165 words, retain 5-10 hashtags on the final line, and include named technical components in the prose.`;
+    )}. Rewrite the whole post so it passes every rule. Keep the prose between 110 and 220 words, retain 5-10 hashtags on the final line, include named technical components in the prose, and preserve a scannable LinkedIn layout with short paragraphs or light bullets when they help.`;
     text = await polishWithDeepSeek({
       ...options,
       revisionNotes,
@@ -223,6 +224,7 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
         domainFocus: domainPrompt,
         postType,
         postTypeGuidance: postTypeGuidance(postType),
+        formatGuidance: draftMeta.formatGuidance,
       });
       text = result.text;
       generationAttempts = result.attempts;

@@ -68,7 +68,7 @@ function wordBounds(): { min: number; max: number } {
   const max = Number(process.env.POST_WORD_MAX);
   return {
     min: Number.isFinite(min) && min > 0 ? min : 90,
-    max: Number.isFinite(max) && max > 0 ? max : 180,
+    max: Number.isFinite(max) && max > 0 ? max : 220,
   };
 }
 
@@ -231,6 +231,10 @@ export function hasStrongHook(prose: string): boolean {
   if (!first) {
     return false;
   }
+  const firstWords = first.split(/\s+/).filter(Boolean);
+  if (firstWords.length <= 10 && /[.!?]$/.test(first)) {
+    return true;
+  }
   return (
     first.includes("mistake") ||
     first.includes("problem") ||
@@ -256,6 +260,11 @@ export function hasStrongHook(prose: string): boolean {
     first.includes("telemetry") ||
     first.includes("under load") ||
     first.includes("in one ") ||
+    first.startsWith("most ") ||
+    first.startsWith("after ") ||
+    first.startsWith("alongside ") ||
+    first.startsWith("when ") ||
+    first.startsWith("aws ") ||
     first.includes("?")
   );
 }

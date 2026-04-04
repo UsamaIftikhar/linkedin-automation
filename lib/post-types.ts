@@ -6,6 +6,8 @@ export const POST_TYPES = [
   "architecture_explained",
   "devops_tip",
   "scaling_story",
+  "simple_explainer",
+  "engineering_judgment",
 ] as const;
 
 export type PostType = (typeof POST_TYPES)[number];
@@ -32,6 +34,8 @@ export function postTypeGuidance(type: PostType): string {
     architecture_explained: "System design angle: constraints, choices, tradeoffs, how pieces connect.",
     devops_tip: "Practical infra or deployment advice: pipelines, observability, releases, or reliability.",
     scaling_story: "Growth or performance: load, bottlenecks, what you changed in the stack or process.",
+    simple_explainer: "Teach the idea in simple terms without dumbing it down: when to use it, when not to, and the key tradeoff.",
+    engineering_judgment: "Write like an experienced engineer making decisions under constraints: clear opinion, tradeoffs, practical reasoning, no fluff.",
   };
   return map[type];
 }

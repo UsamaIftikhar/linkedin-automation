@@ -129,6 +129,35 @@ const summaryLines = [
   "The next release feels calmer when the pipeline and dashboards tell the same story.",
 ];
 
+const issueSectionLabels = [
+  "What usually goes wrong",
+  "Where teams get stuck",
+  "The pattern behind it",
+  "What keeps breaking",
+] as const;
+
+const tradeoffLines = [
+  "The trade-off is accepting a little more upfront structure so failures show up earlier in the real stack.",
+  "The trade-off is a bit more operational discipline in exchange for fewer surprises at deploy time.",
+  "The trade-off is slightly slower iteration at first, but much clearer signals once the system is live.",
+  "The trade-off is taking on some implementation complexity now so scaling and debugging stay predictable later.",
+] as const;
+
+function addOptionalClosing(lines: string[], rand: () => number) {
+  const optionalContext = chooseOptional(contextLines, rand, 0.55);
+  const optionalSummary = chooseOptional(summaryLines, rand, 0.55);
+
+  if (optionalContext) {
+    lines.push("");
+    lines.push(optionalContext);
+  }
+
+  if (optionalSummary) {
+    lines.push("");
+    lines.push(optionalSummary);
+  }
+}
+
 /**
  * Each `runEntropy` value (default: new UUID per call) picks pillar, layout, and phrasing.
  */
@@ -146,7 +175,7 @@ export function pickPillarAndFormat(
   }
 
   const pillar = pillars[hashString(runEntropy) % pillars.length];
-  const formatIndex = hashString(`${runEntropy}|layout`) % 7;
+  const formatIndex = hashString(`${runEntropy}|layout`) % 10;
   const seed = `${runEntropy}|${pillar.id}|${formatIndex}|${date.toISOString()}`;
   const rand = createDeterministicRandom(seed);
 
@@ -163,8 +192,7 @@ function buildFromTemplate(pillar: Pillar, formatIndex: number, rand: () => numb
     "Teams often optimize for the wrong milestone, so the real constraint never gets addressed.";
 
   const lines: string[] = [];
-  const optionalContext = chooseOptional(contextLines, rand, 0.55);
-  const optionalSummary = chooseOptional(summaryLines, rand, 0.55);
+  const problemLine = pillar.problem.replace(/\.$/, "");
 
   switch (formatIndex) {
     case 0: {
@@ -181,8 +209,8 @@ function buildFromTemplate(pillar: Pillar, formatIndex: number, rand: () => numb
       lines.push(`I see this clearly when ${pillar.problem.toLowerCase().replace(/\.$/, "")}${a}.`);
       lines.push("");
       lines.push("What usually goes wrong:");
-      lines.push(`• ${persists}.`);
-      lines.push(`• ${choose(bulletAdditions, rand)}`);
+      lines.push(`- ${persists}.`);
+      lines.push(`- ${choose(bulletAdditions, rand)}`);
       lines.push("");
       lines.push(`${strategyLine(rand, pillar.principle)}.`);
       break;
@@ -225,14 +253,49 @@ function buildFromTemplate(pillar: Pillar, formatIndex: number, rand: () => numb
       break;
     }
 
+    case 7: {
+      lines.push(`Most teams do not struggle because the stack is weak. They struggle because ${problemLine.toLowerCase()}${a}.`);
+      lines.push("");
+      lines.push(`${choose(issueSectionLabels, rand)}:`);
+      lines.push(`- ${persists}.`);
+      lines.push(`- ${choose(bulletAdditions, rand)}.`);
+      lines.push("");
+      lines.push("What I do now:");
+      lines.push(`- ${pillar.principle}.`);
+      break;
+    }
+
+    case 8: {
+      lines.push(`Architecture gets clearer once you stop treating "${problemLine}" as an abstract planning issue${a}.`);
+      lines.push("");
+      lines.push("What changed:");
+      lines.push(`${choose(persistenceStarts, rand)} ${persists}.`);
+      lines.push("");
+      lines.push("The implementation move:");
+      lines.push(`${pillar.principle}.`);
+      lines.push("");
+      lines.push(`The trade-off: ${choose(tradeoffLines, rand).toLowerCase()}`);
+      break;
+    }
+
+    case 9: {
+      lines.push(`Most engineering problems are decision problems before they become scaling problems${a}.`);
+      lines.push("");
+      lines.push(`I keep coming back to this when ${problemLine.toLowerCase()}.`);
+      lines.push("");
+      lines.push("The signal I trust:");
+      lines.push(`- ${persists}.`);
+      lines.push(`- ${pillar.principle}.`);
+      break;
+    }
+
     default: {
-      const prob = pillar.problem.replace(/\.$/, "");
       const hookLead = choose(
         [
-          `What bit us in prod: ${prob.toLowerCase()}${a}.`,
-          `Lesson from the field: ${prob.toLowerCase()}${a}.`,
-          `I keep seeing ${prob.toLowerCase()}${a}.`,
-          `Ships stall when ${prob.toLowerCase()}${a}.`,
+          `What bit us in prod: ${problemLine.toLowerCase()}${a}.`,
+          `Lesson from the field: ${problemLine.toLowerCase()}${a}.`,
+          `I keep seeing ${problemLine.toLowerCase()}${a}.`,
+          `Ships stall when ${problemLine.toLowerCase()}${a}.`,
         ],
         rand,
       );
@@ -246,15 +309,7 @@ function buildFromTemplate(pillar: Pillar, formatIndex: number, rand: () => numb
     }
   }
 
-  if (optionalContext) {
-    lines.push("");
-    lines.push(optionalContext);
-  }
-
-  if (optionalSummary) {
-    lines.push("");
-    lines.push(optionalSummary);
-  }
+  addOptionalClosing(lines, rand);
 
   lines.push("");
   lines.push(pillar.cta);
@@ -269,7 +324,7 @@ function buildFromTemplate(pillar: Pillar, formatIndex: number, rand: () => numb
   return lines.join("\n");
 }
 
-/** Human-readable names for `formatIndex` 0–6 (matches `buildFromTemplate` branches). */
+/** Human-readable names for `formatIndex` values (matches `buildFromTemplate` branches). */
 export const FORMAT_TEMPLATE_KEYS = [
   "lead_persistence_strategy_outcome",
   "isee_bullets_strategy",
@@ -278,11 +333,29 @@ export const FORMAT_TEMPLATE_KEYS = [
   "hardest_part_strategy_outcome",
   "keep_seeing_strategy_outcome",
   "one_strong_signal",
+  "sections_and_bullets",
+  "architecture_breakdown",
+  "engineering_judgment",
 ] as const;
 
 export function formatTemplateLabel(formatIndex: number): string {
-  const i = ((formatIndex % 7) + 7) % 7;
+  const i = ((formatIndex % FORMAT_TEMPLATE_KEYS.length) + FORMAT_TEMPLATE_KEYS.length) %
+    FORMAT_TEMPLATE_KEYS.length;
   return FORMAT_TEMPLATE_KEYS[i] ?? "unknown";
+}
+
+export function formatTemplateGuidance(formatIndex: number): string {
+  switch (formatTemplateLabel(formatIndex)) {
+    case "isee_bullets_strategy":
+    case "sections_and_bullets":
+      return "Prefer short paragraphs plus 2-4 hyphen bullets. Use scannable labels when helpful.";
+    case "architecture_breakdown":
+      return "Use compact explanatory sections such as 'What changed', 'Architecture overview', or 'The trade-off'.";
+    case "engineering_judgment":
+      return "Lead with a clear opinion or principle, then explain the engineering reasoning with concise paragraphs or bullets.";
+    default:
+      return "Use short, readable paragraphs. Keep the layout natural and scannable instead of one dense block.";
+  }
 }
 
 export type DraftPostResult = {
@@ -290,6 +363,7 @@ export type DraftPostResult = {
   pillarId: string;
   formatIndex: number;
   formatKey: string;
+  formatGuidance: string;
 };
 
 /**
@@ -307,6 +381,7 @@ export function buildDraftPost(
     pillarId: pillar.id,
     formatIndex,
     formatKey: formatTemplateLabel(formatIndex),
+    formatGuidance: formatTemplateGuidance(formatIndex),
   };
 }
 
