@@ -3,6 +3,41 @@ import type { PostType } from "@/lib/post-types";
 export const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
 
+function resolveWordBounds(): { min: number; max: number } {
+  const min = Number(process.env.POST_WORD_MIN);
+  const max = Number(process.env.POST_WORD_MAX);
+  return {
+    min: Number.isFinite(min) && min > 0 ? min : 90,
+    max: Number.isFinite(max) && max > 0 ? max : 220,
+  };
+}
+
+function resolveHashtagBounds(): { min: number; max: number } {
+  const min = Number(process.env.POST_HASHTAG_MIN);
+  const max = Number(process.env.POST_HASHTAG_MAX);
+  return {
+    min: Number.isFinite(min) && min >= 0 ? min : 5,
+    max: Number.isFinite(max) && max > 0 ? max : 10,
+  };
+}
+
+function buildValidatorChecklist(): string {
+  const { min: wordMin, max: wordMax } = resolveWordBounds();
+  const { min: tagMin, max: tagMax } = resolveHashtagBounds();
+  const charCapRaw = Number(process.env.LINKEDIN_MAX_CHARS);
+  const charCap = Number.isFinite(charCapRaw) && charCapRaw > 0 ? charCapRaw : 3000;
+  return `VALIDATOR CHECKLIST (must pass all):
+- Prose word count must be ${wordMin}-${wordMax} (hashtags are excluded from prose count).
+- Put hashtags only on dedicated final line(s), with each token shaped like #Word.
+- Hashtag count must be ${tagMin}-${tagMax}.
+- Total character count must be <= ${charCap}.
+- First line must be a strong hook (problem, tension, lesson, why/how framing, or a sharp technical insight).
+- Prose must include at least one named stack component (for example: Lambda, Postgres, GitHub Actions, CloudWatch, IoT Core, Kubernetes, Terraform, API Gateway).
+- Avoid non-technical framing (procurement, SOW, paid discovery, sales-deck narrative).
+- Avoid polished/corporate slogans and keep paragraphs short and scannable.
+- Output format must be: prose, one blank line, one hashtag line.`;
+}
+
 function resolveMaxTokens(model: string): number {
   const raw = process.env.DEEPSEEK_MAX_TOKENS?.trim();
   const parsed = raw ? Number(raw) : NaN;
@@ -79,9 +114,13 @@ const SYSTEM_PROMPT = `You are a professional LinkedIn ghostwriter for a senior 
 - DevOps (CI/CD pipelines, deployments, monitoring, logging)
 - IoT systems (AWS IoT Core, MQTT, telemetry pipelines)
 - Frontend development (Next.js, React, TypeScript, performance, rendering)
+- Mobile app development (React Native, AI-assisted UX flows)
 - Platform deployments (DigitalOcean, Railway, Vercel, managed infra tradeoffs)
 - AI model operations (Ollama, Mistral, DeepSeek, NVIDIA NIM, inference workflows)
-- Automation flows (Python functions, cron-job.org, scheduled jobs, external triggers)
+- Automation flows (Python functions, n8n, ClickUp automation, Slack events/webhooks, cron-job.org, scheduled jobs, external triggers)
+- Voice and transcription systems (ElevenLabs APIs, real-time recording/transcription flows, searchable transcripts)
+- Product integrations (Stripe payment flows including hold/release paths, SMTP with Zoho, ATS workflows)
+- Retrieval and model orchestration (vector databases, Hugging Face models, DeepSeek + Claude routing)
 - Low-code integrations
 - AI/ML integrations (RAG, APIs, prompt engineering)
 
@@ -133,6 +172,7 @@ HASHTAG RULES:
 
 POSITIONING:
 - Anchor every post in technical reality: AWS, DigitalOcean, Railway, Vercel, APIs, PostgreSQL, CI/CD, Bitbucket Pipelines, Docker/Kubernetes, MQTT, telemetry, monitoring, scaling, frontend architecture, model serving, failure modes.
+- Include relevant real-world systems when they fit the draft angle: n8n, ClickUp automation, Cova-style broker assistants, React Native AI apps, DeepSeek transcription, ElevenLabs voice features, Slack events/webhooks, Stripe payments, vector databases, Hugging Face, Claude, Zoho SMTP, ATS pipelines.
 - Do not center procurement, SOWs, clients, sales cycles, decks, or commercial discovery.
 - If the draft sounds business-generic, rewrite it into a technical implementation story with the same tension but an engineering lens.
 
@@ -172,6 +212,7 @@ export async function polishWithDeepSeek(options: {
   } = options;
 
   const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
+  const validatorChecklist = buildValidatorChecklist();
   const userPrompt = `POST TYPE: ${postType}
 
 Write the post according to this type:
@@ -198,6 +239,8 @@ Reminder:
 - Do not force a question at the end.
 - End with 5-10 hashtags on a separate final line.
 - Aim for roughly 130-190 prose words so the final result stays safely inside the validator range.
+
+${validatorChecklist}
 ${revisionNotes ? `\nREVISION NOTES:\n${revisionNotes}` : ""}`;
 
   const isReasoningModel = model === "deepseek-reasoner";

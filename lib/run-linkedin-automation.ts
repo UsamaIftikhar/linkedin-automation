@@ -61,6 +61,17 @@ function resolveLlmTemperature(model: string): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function resolveGenerationMaxAttempts(): number {
+  const raw =
+    process.env.DEEPSEEK_MAX_ATTEMPTS?.trim() ??
+    process.env.LLM_MAX_ATTEMPTS?.trim();
+  const parsed = raw ? Number(raw) : NaN;
+  if (Number.isFinite(parsed) && parsed >= 1) {
+    return Math.min(Math.floor(parsed), 10);
+  }
+  return 5;
+}
+
 async function generateDeepSeekPost(options: {
   apiKey: string;
   model: string;
@@ -72,15 +83,16 @@ async function generateDeepSeekPost(options: {
   postTypeGuidance: string;
   formatGuidance: string;
 }): Promise<{ text: string; attempts: number }> {
+  const maxAttempts = resolveGenerationMaxAttempts();
   let attempts = 1;
   let text = await polishWithDeepSeek(options);
   let lint = lintLinkedInPost(text);
 
-  while (!lint.ok && attempts < 3) {
+  while (!lint.ok && attempts < maxAttempts) {
     attempts += 1;
     const revisionNotes = `The previous draft failed validation with these issues: ${lint.issues.join(
       "; ",
-    )}. Rewrite the whole post so it passes every rule. Keep the prose between 110 and 220 words, retain 5-10 hashtags on the final line, include named technical components in the prose, and preserve a scannable LinkedIn layout with short paragraphs or light bullets when they help.`;
+    )}. Rewrite the entire post so it passes every validator rule exactly. Do not keep weak lines from the failed draft. Remaining attempts including this one: ${maxAttempts - attempts + 1}.`;
     text = await polishWithDeepSeek({
       ...options,
       revisionNotes,

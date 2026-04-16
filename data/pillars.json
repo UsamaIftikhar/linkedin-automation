@@ -88,6 +88,30 @@
     "cta": "What was the first real bottleneck you hit in model serving?"
   },
   {
+    "id": "broker-assistant-mobile-ai",
+    "audience": "teams building vertical AI products for operations-heavy users",
+    "problem": "AI assistant demos feel impressive until real users need reliable mobile workflows, searchable context, and audit-friendly outputs.",
+    "persists": "Teams often ship chat first, but brokers and field users need guided actions, transcript history, and voice plus text handoff that works under real time pressure.",
+    "principle": "In a React Native app, separate conversation UX from task execution, stream meeting transcription with DeepSeek, index key moments in a vector store for retrieval, and expose follow-up actions as explicit workflows instead of free-form prompts only.",
+    "cta": "When you ship vertical AI apps, what fails first: retrieval quality, workflow clarity, or mobile UX?"
+  },
+  {
+    "id": "slack-clickup-automation-sprawl",
+    "audience": "teams automating internal ops with SaaS tools",
+    "problem": "Automation starts fast but turns fragile when Slack events, ClickUp actions, and webhook retries are wired without idempotency and observability.",
+    "persists": "A single duplicate event or timeout can create duplicate tasks, inconsistent statuses, and noisy channels if the flow has no durable dedupe keys or replay-safe handlers.",
+    "principle": "Treat Slack events and webhooks as an event stream: verify signatures, store event IDs for idempotency, push async steps through workers, and keep ClickUp updates behind retry-aware handlers with structured logs.",
+    "cta": "What made your automation stable: retries, idempotency keys, or better event tracing?"
+  },
+  {
+    "id": "stripe-payment-holds-flow",
+    "audience": "engineers implementing real payment lifecycles",
+    "problem": "Payment integrations break trust when teams handle only the happy path and ignore holds, capture timing, reconciliation, and dispute-state transitions.",
+    "persists": "Checkout looks done after authorization, but real systems still need deterministic handling of pending, hold, capture, refund, and failure events across webhooks and dashboards.",
+    "principle": "Model each payment state explicitly, map Stripe webhooks to idempotent transitions, persist an audit trail for every step, and generate operational docs so support and finance can trace the same lifecycle engineers debug.",
+    "cta": "Which payment state caused your biggest production incident: hold expiry, capture failure, or webhook ordering?"
+  },
+  {
     "id": "architecture-boundaries",
     "audience": "engineers designing multi-service systems",
     "problem": "Architecture gets harder to change when service boundaries are drawn around teams instead of around failure modes and data ownership.",
