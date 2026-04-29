@@ -20,6 +20,12 @@ export const DOMAIN_FOCUS = [
   "platforms",
   "llm_ops",
   "automation",
+  "ai_product_building",
+  "saas_launch_lessons",
+  "client_delivery_stories",
+  "founder_technical_decisions",
+  "freelance_lessons",
+  "ai_integration_production",
 ] as const;
 
 export type DomainFocusSlug = (typeof DOMAIN_FOCUS)[number];
@@ -39,6 +45,18 @@ const DOMAIN_BLURB: Record<DomainFocusSlug, string> = {
   platforms: "DigitalOcean, Railway, Vercel, managed services, deployment tradeoffs",
   llm_ops: "Ollama, Mistral, DeepSeek, NVIDIA/NIM, model serving, inference workflows",
   automation: "Python functions, external cron jobs, cron-job.org, scheduled workflows, orchestration",
+  ai_product_building:
+    "shipping AI features into real SaaS products: concurrency limits, fallback models, UX boundaries, founder-visible reliability",
+  saas_launch_lessons:
+    "the last 5% of launching a SaaS: edge cases, environment drift, first real user surfacing what staging never could",
+  client_delivery_stories:
+    "real client engagements: scope, tradeoff conversations, the moment something nearly broke, and what shipped anyway",
+  founder_technical_decisions:
+    "decisions a founder or CTO must make: build vs buy, scope, complexity, and where to spend the first engineer-week",
+  freelance_lessons:
+    "running freelance and consulting projects well: defining done, scoping clearly, managing expectations across 26 Upwork projects",
+  ai_integration_production:
+    "operationalizing LLMs in production: streaming, model routing (Mistral, DeepSeek, Claude), cost control, observability, fallbacks",
 };
 
 function hashString(s: string): number {
@@ -67,7 +85,7 @@ function wordBounds(): { min: number; max: number } {
   const min = Number(process.env.POST_WORD_MIN);
   const max = Number(process.env.POST_WORD_MAX);
   return {
-    min: Number.isFinite(min) && min > 0 ? min : 90,
+    min: Number.isFinite(min) && min > 0 ? min : 80,
     max: Number.isFinite(max) && max > 0 ? max : 220,
   };
 }
@@ -246,23 +264,40 @@ export function hasNamedStackDetail(prose: string): boolean {
   return NAMED_STACK_HINTS.some((hint) => t.includes(hint));
 }
 
-/** Blocks sales/procurement framing; posts should read as hands-on engineering. */
-export function hasNonTechnicalFraming(prose: string): string | null {
-  const t = prose.toLowerCase();
-  if (/\bprocurement\b/.test(t)) {
-    return "Avoid procurement / buying-process framing; focus on systems you build or operate.";
-  }
-  if (/\bstatement of work\b/.test(t) || /\bsow\b/.test(t)) {
-    return "Avoid SOW / statement-of-work language; describe technical work and architecture instead.";
-  }
-  if (/\bpaid discovery\b/.test(t) || /\bgo\/no-go\b/.test(t)) {
-    return "Avoid commercial discovery / go-no-go sales language; stay in implementation and engineering tradeoffs.";
-  }
-  if (/\banother round of decks\b/.test(t) || /\bsales promises\b/.test(t)) {
-    return "Avoid generic business / sales narrative; anchor in concrete engineering (AWS, CI/CD, APIs, data, IoT).";
-  }
-  return null;
-}
+/** Founder/CTO-facing banned corporate phrases (case-insensitive substring match). */
+const FOUNDER_BANNED_PHRASES = [
+  "excited to share",
+  "pleased to announce",
+  "I am excited",
+  "I'm excited",
+  "leverage",
+  "seamless",
+  "cutting-edge",
+  "innovative solution",
+  "game-changing",
+  "I believe I can",
+] as const;
+
+/**
+ * Audience hashtags — at least one must appear so posts target founders/CTOs, not engineers.
+ * Comparison is case-insensitive, so the casing here is for readability only. The list is wider
+ * than the system-prompt list because Flash-class models often pick close-but-different forms
+ * (e.g. #Startup vs #Startups, #CTO vs #CTOs, #Tech, #SoftwareDevelopment, #Entrepreneurship).
+ */
+const AUDIENCE_HASHTAGS = [
+  "#SaaS",
+  "#Startups",
+  "#TechLeadership",
+  "#ProductDevelopment",
+  "#CTOs",
+  "#AITools",
+  "#Founders",
+  "#Startup",
+  "#Tech",
+  "#SoftwareDevelopment",
+  "#Entrepreneurship",
+  "#CTO",
+] as const;
 
 const OVER_POLISHED_PHRASES = [
   "single, authoritative path",
@@ -434,6 +469,8 @@ export function extractHashtags(text: string): string[] {
 export type PostLintResult = {
   ok: boolean;
   issues: string[];
+  /** Soft signals that do NOT block publish but are useful in logs. */
+  warnings: string[];
   wordCount: number;
   hashtagCount: number;
   charCount: number;
@@ -451,6 +488,7 @@ export function lintLinkedInCharLimit(text: string): PostLintResult {
   return {
     ok: issues.length === 0,
     issues,
+    warnings: [],
     wordCount: countWords(prose),
     hashtagCount: extractHashtags(tagBlock.length > 0 ? tagBlock : text).length,
     charCount,
@@ -460,6 +498,7 @@ export function lintLinkedInCharLimit(text: string): PostLintResult {
 /** Full rules for generated posts (Buffer → LinkedIn). */
 export function lintLinkedInPost(text: string): PostLintResult {
   const issues: string[] = [];
+  const warnings: string[] = [];
   const charCount = [...text].length;
   const { prose, tagBlock } = splitProseAndHashtagBlock(text);
   const wordCount = countWords(prose);
@@ -495,15 +534,41 @@ export function lintLinkedInPost(text: string): PostLintResult {
       "Weak hook: open with a problem, mistake, lesson, why/how question, or sharp insight in the first line.",
     );
   }
+  // Named stack component is now a soft warning. Founder/CTO-facing posts often skip
+  // explicit tech names in favor of plain-language stakes; we don't want to block publish on this.
   if (!hasNamedStackDetail(prose)) {
-    issues.push(
-      "Name at least one concrete stack element in prose (e.g. AWS IoT Core rule → Kinesis → Lambda, Postgres idempotency key, GitHub Actions job on main). Vague phrases like 'ingest workers' or 'the pipeline' alone are not enough.",
+    warnings.push(
+      "No concrete stack element named in prose (e.g. Supabase, Postgres, Stripe, DeepSeek). Soft signal only — does not block publish.",
     );
   }
 
-  const framing = hasNonTechnicalFraming(prose);
-  if (framing) {
-    issues.push(framing);
+  const proseLines = prose.split(/\n/).map((l) => l.trim()).filter(Boolean);
+  const firstLine = proseLines[0] ?? "";
+  if (/^I\s/i.test(firstLine)) {
+    issues.push('Opening line must not start with "I"');
+  }
+
+  const lowerProse = prose.toLowerCase();
+  for (const phrase of FOUNDER_BANNED_PHRASES) {
+    if (lowerProse.includes(phrase.toLowerCase())) {
+      issues.push(`Remove banned phrase: "${phrase}"`);
+    }
+  }
+
+  // Question can appear anywhere in the post (Flash sometimes places it after the hashtags).
+  if (!text.includes("?")) {
+    issues.push("Post must contain a question to drive engagement");
+  }
+
+  const tagSearchSource = tagBlock.length > 0 ? tagBlock : text;
+  const tagSearchLower = tagSearchSource.toLowerCase();
+  const hasAudienceHashtag = AUDIENCE_HASHTAGS.some((tag) =>
+    tagSearchLower.includes(tag.toLowerCase()),
+  );
+  if (!hasAudienceHashtag) {
+    issues.push(
+      `Must include at least one audience hashtag (e.g. ${AUDIENCE_HASHTAGS.slice(0, 6).join(" ")}).`,
+    );
   }
 
   const polished = hasOverPolishedPhrasing(prose);
@@ -519,6 +584,7 @@ export function lintLinkedInPost(text: string): PostLintResult {
   return {
     ok: issues.length === 0,
     issues,
+    warnings,
     wordCount,
     hashtagCount,
     charCount,

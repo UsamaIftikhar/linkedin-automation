@@ -1,122 +1,122 @@
 [
   {
-    "id": "scope-blocks-backend",
-    "audience": "teams shipping APIs on AWS",
-    "problem": "Backend work stalls while people wait for a frozen scope doc, even though the architecture path is already obvious.",
-    "persists": "OpenAPI sketches, the Postgres schema direction, and the first deploy target are knowable early, but nothing ships until paperwork catches up.",
-    "principle": "Define narrow API contracts, deploy a thin service behind an ALB or API Gateway, run Prisma or Flyway migrations against Postgres in CI, and promote the same GitHub Actions artifact through dev before the scope is declared final.",
-    "cta": "When scope lags, do you ship contracts first, a thin service first, or something else?"
+    "id": "ai-product-lessons",
+    "audience": "startup founders and CTOs building AI features",
+    "problem": "Most AI features work perfectly in demos but fail silently in production under real load",
+    "persists": "because teams optimize for model accuracy but never define concurrency limits, fallback behavior, or operational boundaries before shipping",
+    "principle": "Before exposing any AI endpoint to users, measure token throughput, cap concurrent requests, define explicit timeout behavior, and keep a lighter fallback model ready. Building Cova (apps.apple.com/us/app/cova/id6748680152) taught me this the hard way — the DeepSeek transcription pipeline worked perfectly until three brokers recorded simultaneously.",
+    "cta": "What broke first in your AI feature after going live — the model, the infrastructure, or the UX?"
   },
   {
-    "id": "ci-cd-truth",
-    "audience": "platform and backend engineers",
-    "problem": "Production surprises keep showing up because the pipeline does not enforce the checks that actually matter.",
-    "persists": "Tests stay optional on pull requests, migrations run with different env vars in GitHub Actions than in ECS or EC2 prod, and nobody treats the workflow as the source of truth for releasable images.",
-    "principle": "Require green checks on main, build one OCI image per commit, deploy through explicit stages, and wire CloudWatch alarms to the same latency and error metrics I watch right after rollout.",
-    "cta": "What is the one check you refuse to skip on main?"
+    "id": "saas-launch-reality",
+    "audience": "founders and product owners preparing to launch",
+    "problem": "The last 5% of a SaaS build consistently takes 50% of the total time",
+    "persists": "because edge cases, environment config mismatches, and real user error states are invisible until actual users hit them in production",
+    "principle": "Ship to one real user before optimizing anything. On WattVue (wattvue.com), the solar monitoring dashboard worked perfectly in staging. First real client exposed three edge cases in the data pipeline we had never considered. One real user beats 100 internal test scenarios.",
+    "cta": "What nearly killed your last product launch that you never saw coming in testing?"
   },
   {
-    "id": "iot-telemetry-path",
-    "audience": "engineers on devices plus cloud",
-    "problem": "Device telemetry looks fine in the lab, then breaks under flaky networks and bursty publish rates.",
-    "persists": "MQTT QoS, Kinesis retention, and Lambda concurrency limits stay undocumented until dropped messages show up in CloudWatch.",
-    "principle": "Publish over MQTT into AWS IoT Core, forward with rules into Kinesis, consume with Lambda writers that use idempotent keys in DynamoDB or Postgres, and chart consumer lag and error rates in CloudWatch before doubling device count.",
-    "cta": "What failed first for you: connectivity, ordering, or downstream overload?"
+    "id": "client-technical-trust",
+    "audience": "founders hiring developers and technical leads",
+    "problem": "Founders hire developers who sound confident, not developers who are actually right",
+    "persists": "because most developers explain their solution without explaining the tradeoff — so clients cannot tell the difference between a good decision and an overconfident one",
+    "principle": "Explaining the tradeoff before the solution is what builds long-term client trust. On EverCare, I told the client the scheduling feature would take three weeks longer if we wanted it to be multi-tenant safe. They agreed. Six months later that decision saved them a complete rewrite.",
+    "cta": "How do you explain technical tradeoffs to non-technical stakeholders without losing their confidence?"
   },
   {
-    "id": "digitalocean-tradeoff",
-    "audience": "teams choosing pragmatic cloud platforms",
-    "problem": "Teams over-design infrastructure when a simpler DigitalOcean setup would have shipped faster.",
-    "persists": "People jump straight to multi-service cloud patterns before they know if the workload needs more than a droplet, managed Postgres, and a load balancer.",
-    "principle": "Start with one app service or droplet, managed Postgres, object storage, and backups; add Redis, workers, or Kubernetes only when latency, queue depth, or noisy-neighbor issues show up in metrics.",
-    "cta": "Where do you draw the line between a simple platform setup and full cloud sprawl?"
+    "id": "ai-integration-architecture",
+    "audience": "CTOs and technical leads integrating LLMs into products",
+    "problem": "LLM integration looks simple until you need streaming, context management, cost control, and fallback behavior all working together in production",
+    "persists": "because most tutorials show the happy path API call — not the operational layer that makes it reliable at scale",
+    "principle": "Route simple tasks to faster cheaper models. Reserve strong models for complex reasoning. Log every inference with latency, model used, and routing decision. On Cova, routing meeting transcription through DeepSeek and conversational queries through a lighter model cut costs by 60% without users noticing.",
+    "cta": "Do you route AI tasks by cost, latency, or output quality first — and how do you measure the tradeoff?"
   },
   {
-    "id": "bitbucket-pipelines-gates",
-    "audience": "teams using Bitbucket or mixed CI stacks",
-    "problem": "Release confidence stays low when Bitbucket Pipelines only builds code but does not verify deployment behavior.",
-    "persists": "A green pipeline can still hide migration order issues, broken environment variables, and container drift between staging and production.",
-    "principle": "Use Bitbucket Pipelines to build one immutable image, run migrations in a controlled step, gate deploys behind smoke tests, and fail the rollout if health checks or synthetic probes degrade.",
-    "cta": "What is the missing gate in your CI/CD pipeline today?"
+    "id": "mvp-architecture-mistakes",
+    "audience": "founders and developers building first SaaS products",
+    "problem": "Most MVPs are over-architected in the wrong places and under-engineered in the places that actually matter",
+    "persists": "because developers default to patterns from their last job rather than asking what this specific product needs to survive its first 100 users",
+    "principle": "Start with one service, managed Postgres, and simple deploys. Add complexity only when metrics show you need it. The biggest mistake I see in early SaaS products is microservices before product-market fit. WattVue started as a monolith. It still is. It serves thousands of users across the US.",
+    "cta": "What architectural decision from your MVP do you wish you had made differently?"
   },
   {
-    "id": "vercel-python-cron",
-    "audience": "teams combining frontend and serverless backends",
-    "problem": "Scheduled workflows look easy until frontend hosting, Python functions, and external cron triggers start drifting out of sync.",
-    "persists": "People assume Vercel scheduling covers every case, then discover they still need cron-job.org or another external trigger for timezone control, retries, or protected endpoints.",
-    "principle": "Keep the UI on Next.js, isolate Python functions behind authenticated routes, trigger them from cron-job.org with a shared secret, and log each scheduled execution so missed runs are visible before users notice.",
-    "cta": "Do you prefer platform-native scheduling or external cron services for reliability?"
+    "id": "production-environment-reality",
+    "audience": "developers and CTOs managing production deployments",
+    "problem": "Staging works. Production breaks. The gap is almost always environment configuration, not code.",
+    "persists": "because teams treat environment variables, secrets, and runtime configuration as an afterthought rather than first-class concerns in the deployment pipeline",
+    "principle": "Every environment must be explicitly defined, version-controlled, and verified before deploy. Pin runtime versions. Document every secret. Test migrations against a production-equivalent database before touching prod. I have seen more production incidents caused by a wrong DATABASE_URL than by bad code.",
+    "cta": "What environment configuration issue caused your most painful production incident?"
   },
   {
-    "id": "railway-deploy-drift",
-    "audience": "small teams moving quickly with managed platforms",
-    "problem": "Railway or Vercel deployments feel effortless until config drift makes the app behave differently across preview, staging, and production.",
-    "persists": "Managed platforms reduce setup time, but secrets, build flags, and background jobs still need the same rigor as any other environment.",
-    "principle": "Treat Railway services like any other environment: pin runtime versions, verify migration order, document env vars, and keep background workers separate from the web process so failures are easier to isolate.",
-    "cta": "What bites you more on managed platforms: secrets, build config, or background jobs?"
+    "id": "freelance-client-lessons",
+    "audience": "founders hiring freelancers and freelancers looking for clients",
+    "problem": "Most freelance projects fail not because of technical skill but because of scope, communication, and expectation mismatches in the first two weeks",
+    "persists": "because both clients and developers avoid the uncomfortable conversation about what done actually means until it is too late to align",
+    "principle": "Define done before writing a line of code. Every project I scope now has three columns: what is in, what is explicitly out, and what requires a separate conversation. This single practice has eliminated scope disputes across 26 Upwork projects with a 100% job success score.",
+    "cta": "What is the one conversation you wish you had earlier on a project that went sideways?"
   },
   {
-    "id": "frontend-architecture-boundary",
-    "audience": "frontend and full-stack engineers",
-    "problem": "Frontend performance problems often come from weak boundaries, not from React itself.",
-    "persists": "Teams mix server concerns, client state, and API orchestration in the same component tree until rerenders and loading logic become hard to reason about.",
-    "principle": "Use clear server/client boundaries in Next.js, keep expensive fetching on the server where possible, push mutations behind stable API routes, and measure hydration cost before blaming the framework.",
-    "cta": "What frontend boundary improved your app the most recently?"
+    "id": "react-codebase-health",
+    "audience": "CTOs and tech leads managing growing React codebases",
+    "problem": "React codebases become unmaintainable not because React is bad but because boundaries between UI, state, and data fetching are never enforced",
+    "persists": "because teams ship features fast without establishing component contracts, and the technical debt accumulates invisibly until a new developer cannot understand the codebase in under a day",
+    "principle": "Components do one thing. Custom hooks own all side effects. Server and client concerns never mix in the same file. On EverCare, refactoring an 800-line scheduling component into four focused units reduced bug reports in that module by more than half.",
+    "cta": "What is the single architectural rule you enforce most strictly in your React codebase?"
   },
   {
-    "id": "ollama-local-models",
-    "audience": "engineers experimenting with local AI workflows",
-    "problem": "Local LLM demos look impressive until memory limits, latency, and model quality make the workflow unusable for real users.",
-    "persists": "People treat Ollama like a drop-in cloud replacement without measuring prompt size, GPU availability, or whether Mistral-class models are good enough for the task.",
-    "principle": "Use Ollama for controlled local inference, keep prompts compact, benchmark Mistral or DeepSeek variants against the exact task, and move to hosted inference only after you know what throughput and quality you actually need.",
-    "cta": "Where do you draw the line between local inference and hosted model APIs?"
+    "id": "supabase-production-lessons",
+    "audience": "founders and developers building on Supabase",
+    "problem": "Supabase feels like magic until you hit multi-tenant data isolation, RLS policy gaps, and environment separation in production",
+    "persists": "because the local development experience is so smooth that teams skip the hard questions about tenant isolation and secret management until a real client's data is at risk",
+    "principle": "Separate Supabase projects for dev and production from day one. Version control every RLS policy. Test tenant isolation explicitly before onboarding any real user. I have audited three Supabase codebases where the RLS policies looked correct but had subtle bypass vectors through URL manipulation.",
+    "cta": "What Supabase production issue caught you off guard that was not obvious during development?"
   },
   {
-    "id": "model-routing-architecture",
-    "audience": "teams building AI-assisted products",
-    "problem": "AI features become expensive fast when every request is sent to the strongest model by default.",
-    "persists": "Without routing rules, lightweight classification, retrieval, and formatting tasks get mixed with deeper reasoning work that should go to a different model tier.",
-    "principle": "Route simple tasks to faster models, reserve deeper reasoning for harder prompts, store prompt versions alongside outputs, and log latency plus fallback behavior so model choices stay explainable.",
-    "cta": "Do you route AI tasks by cost, latency, or quality first?"
+    "id": "payment-lifecycle-reality",
+    "audience": "founders and developers implementing payment systems",
+    "problem": "Payment integrations break user trust when teams only handle the happy path and ignore holds, capture timing, and webhook ordering",
+    "persists": "because authorization feels like the finish line, but the real failures happen asynchronously in hold expiry, capture failure, and dispute state transitions that nobody mapped before shipping",
+    "principle": "Model every payment state explicitly in Postgres. Make every Stripe webhook handler idempotent with dedupe keys. Build a reconciliation worker that runs every 15 minutes. The hard part is not capturing a payment — it is unwinding a hold precisely when the customer already saw a confirmation screen.",
+    "cta": "Which payment edge case caused your biggest production incident — hold expiry, webhook ordering, or something else?"
   },
   {
-    "id": "nvidia-inference-serving",
-    "audience": "teams serving models in production",
-    "problem": "Inference stacks fail under load when GPU utilization, batching, and request timeouts are treated like afterthoughts.",
-    "persists": "A model endpoint can look healthy in testing while still collapsing in production because queueing, warmup, and concurrency limits were never measured.",
-    "principle": "Whether you use NVIDIA NIM or a custom container, measure token throughput, cap concurrency, define timeout behavior, and keep a smaller fallback model ready before exposing the endpoint to user traffic.",
-    "cta": "What was the first real bottleneck you hit in model serving?"
+    "id": "broker-ai-assistant-build",
+    "audience": "founders building vertical AI products for specific industries",
+    "problem": "Vertical AI assistants fail in production when teams optimize for demo quality instead of workflow reliability for real users under time pressure",
+    "persists": "because a smooth chat interface is not the same as a tool that works for a broker in a client meeting, a field technician with spotty signal, or a doctor between appointments",
+    "principle": "Separate conversation UX from task execution. Stream transcription asynchronously. Index key moments for retrieval. Expose follow-up actions as explicit workflows not free-form prompts. Cova (apps.apple.com/us/app/cova/id6748680152) went through four architecture iterations before insurance brokers could use it reliably in live client meetings.",
+    "cta": "When you build vertical AI tools, what fails first for real users — retrieval quality, workflow clarity, or mobile reliability?"
   },
   {
-    "id": "broker-assistant-mobile-ai",
-    "audience": "teams building vertical AI products for operations-heavy users",
-    "problem": "AI assistant demos feel impressive until real users need reliable mobile workflows, searchable context, and audit-friendly outputs.",
-    "persists": "Teams often ship chat first, but brokers and field users need guided actions, transcript history, and voice plus text handoff that works under real time pressure.",
-    "principle": "In a React Native app, separate conversation UX from task execution, stream meeting transcription with DeepSeek, index key moments in a vector store for retrieval, and expose follow-up actions as explicit workflows instead of free-form prompts only.",
-    "cta": "When you ship vertical AI apps, what fails first: retrieval quality, workflow clarity, or mobile UX?"
+    "id": "architecture-service-boundaries",
+    "audience": "CTOs and senior engineers designing multi-service systems",
+    "problem": "Architecture becomes harder to change when service boundaries are drawn around team structure instead of around data ownership and failure modes",
+    "persists": "because a clean architecture diagram can still hide chatty APIs, duplicated state, and unclear ownership that only shows up under production load or when the team grows",
+    "principle": "Draw boundaries around the write path and blast radius first. Communication method — queues, webhooks, synchronous APIs — is a secondary decision based on latency and recovery needs, not diagram aesthetics. Define who owns the canonical state for each entity before writing a single service.",
+    "cta": "What service boundary do you wish you had defined differently before your system grew?"
   },
   {
-    "id": "slack-clickup-automation-sprawl",
-    "audience": "teams automating internal ops with SaaS tools",
-    "problem": "Automation starts fast but turns fragile when Slack events, ClickUp actions, and webhook retries are wired without idempotency and observability.",
-    "persists": "A single duplicate event or timeout can create duplicate tasks, inconsistent statuses, and noisy channels if the flow has no durable dedupe keys or replay-safe handlers.",
-    "principle": "Treat Slack events and webhooks as an event stream: verify signatures, store event IDs for idempotency, push async steps through workers, and keep ClickUp updates behind retry-aware handlers with structured logs.",
-    "cta": "What made your automation stable: retries, idempotency keys, or better event tracing?"
+    "id": "model-serving-production",
+    "audience": "CTOs and engineers shipping AI features to real users",
+    "problem": "Model endpoints that pass every test still collapse in production because concurrency, queuing, and timeout behavior were never measured before going live",
+    "persists": "because health checks report up while the GPU memory fills and requests queue silently — the failure mode is invisible until users see errors",
+    "principle": "Measure token throughput before launch. Set explicit concurrency limits. Define timeout behavior and structured error responses. Deploy a smaller fallback model on a separate path. A week of upfront profiling prevents the kind of production incident that destroys user trust in an AI feature permanently.",
+    "cta": "What was the first real bottleneck you hit serving a model to actual users?"
   },
   {
-    "id": "stripe-payment-holds-flow",
-    "audience": "engineers implementing real payment lifecycles",
-    "problem": "Payment integrations break trust when teams handle only the happy path and ignore holds, capture timing, reconciliation, and dispute-state transitions.",
-    "persists": "Checkout looks done after authorization, but real systems still need deterministic handling of pending, hold, capture, refund, and failure events across webhooks and dashboards.",
-    "principle": "Model each payment state explicitly, map Stripe webhooks to idempotent transitions, persist an audit trail for every step, and generate operational docs so support and finance can trace the same lifecycle engineers debug.",
-    "cta": "Which payment state caused your biggest production incident: hold expiry, capture failure, or webhook ordering?"
+    "id": "scope-and-shipping",
+    "audience": "technical leads and founders managing development velocity",
+    "problem": "Backend development stalls while waiting for a frozen scope document even when the architecture path is already clear",
+    "persists": "because teams confuse documentation completeness with decision readiness — the API contracts, schema direction, and deploy target are often knowable well before the scope doc is finished",
+    "principle": "Define narrow API contracts early. Deploy a thin service. Run migrations in CI against real infrastructure. Promote the same artifact through environments. Ship the knowable parts while the unknowable parts are still being decided. Waiting for perfect scope is how projects lose weeks.",
+    "cta": "When scope lags, do you ship the thin service first, define contracts first, or wait — and why?"
   },
   {
-    "id": "architecture-boundaries",
-    "audience": "engineers designing multi-service systems",
-    "problem": "Architecture gets harder to change when service boundaries are drawn around teams instead of around failure modes and data ownership.",
-    "persists": "A clean diagram can still hide chatty APIs, duplicated logic, and unclear ownership of state transitions.",
-    "principle": "Draw boundaries around the write path, data ownership, and blast radius first; then choose queues, webhooks, or synchronous APIs based on latency and recovery requirements instead of diagram aesthetics.",
-    "cta": "What architectural boundary did you wish you had changed earlier?"
+    "id": "ci-cd-production-gates",
+    "audience": "engineering teams managing production deployments",
+    "problem": "Production surprises keep appearing because CI pipelines verify code compilation but not deployment behavior",
+    "persists": "because tests run with different environment variables than production, migrations execute in a different order than expected, and nobody treats the pipeline as the source of truth for a releasable artifact",
+    "principle": "Build one immutable image per commit. Run migrations as an explicit controlled step. Gate deploys behind smoke tests. Wire CloudWatch alarms to the same latency and error metrics you watch after every rollout. A green pipeline should mean deployable, not just buildable.",
+    "cta": "What is the one check you refuse to skip before merging to main?"
   }
 ]
