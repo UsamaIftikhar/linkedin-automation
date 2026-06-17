@@ -189,10 +189,14 @@ ${revisionNotes ? `\nREVISION NOTES:\n${revisionNotes}` : ""}`;
     ],
   };
 
-  // Only enable reasoning for the dedicated reasoner model.
-  if (isReasoningModel) {
-    requestBody.thinking = { type: "enabled" };
-  }
+  // DeepSeek V4 models (e.g. deepseek-v4-flash / deepseek-v4-pro) default to thinking mode ON,
+  // which spends the output-token budget on hidden reasoning_content (which we don't read) and
+  // starves the actual post — causing truncated or stub output. Enable thinking only for the
+  // dedicated reasoner model; explicitly disable it for everything else so generation is fast,
+  // cheap, and reliably produces the final post within max_tokens.
+  requestBody.thinking = isReasoningModel
+    ? { type: "enabled" }
+    : { type: "disabled" };
 
   // DeepSeek thinking mode ignores temperature; only send it for non-reasoning models.
   if (!isReasoningModel && typeof temperature === "number") {
@@ -230,7 +234,7 @@ ${revisionNotes ? `\nREVISION NOTES:\n${revisionNotes}` : ""}`;
     const finishReason = data.choices?.[0]?.finish_reason;
     throw new Error(
       finishReason === "length"
-        ? "DeepSeek ran out of output tokens before producing the final post. Increase DEEPSEEK_MAX_TOKENS for deepseek-reasoner."
+        ? `DeepSeek (${model}) ran out of output tokens before producing the final post (max_tokens=${resolveMaxTokens(model)}). Lower DEEPSEEK_TEMPERATURE so it stops rambling, or raise DEEPSEEK_MAX_TOKENS.`
         : finishReason
           ? `DeepSeek returned no final text (finish_reason=${finishReason})`
           : "DeepSeek returned empty text",
