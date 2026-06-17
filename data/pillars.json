@@ -118,5 +118,77 @@
     "persists": "because tests run with different environment variables than production, migrations execute in a different order than expected, and nobody treats the pipeline as the source of truth for a releasable artifact",
     "principle": "Build one immutable image per commit. Run migrations as an explicit controlled step. Gate deploys behind smoke tests. Wire CloudWatch alarms to the same latency and error metrics you watch after every rollout. A green pipeline should mean deployable, not just buildable.",
     "cta": "What is the one check you refuse to skip before merging to main?"
+  },
+  {
+    "id": "hiring-ai-engineers",
+    "audience": "founders and CTOs hiring their first AI engineer",
+    "problem": "Most people who call themselves AI engineers have only ever wired up an API call and have never operated a model in production",
+    "persists": "because a working demo is easy to produce and impossible to distinguish from real depth in a 30-minute interview unless you know which questions expose the gap",
+    "principle": "Ask how they handle the unhappy path, not the happy one. A real AI engineer talks first about timeouts, fallback models, cost per request, evaluation, and what happens when the model returns garbage. Someone who only describes the prompt and the response has built a demo, not a product. Hire for operational judgment, not prompt cleverness.",
+    "cta": "If you have hired AI talent, what question separated the real engineers from the API wrappers?"
+  },
+  {
+    "id": "ai-demo-to-production-gap",
+    "audience": "founders funding or scoping AI features",
+    "problem": "The distance between an impressive AI demo and a reliable AI product is where most AI budgets quietly disappear",
+    "persists": "because the demo is 10% of the work but 90% of the excitement, so teams approve the project based on the part that was already easy",
+    "principle": "Treat the demo as the start of discovery, not proof of delivery. The real work is everything the demo skipped: concurrency, latency under load, cost ceilings, evaluation against real data, graceful failure, and a human fallback. Budget for the 90% nobody clapped for, or the feature never ships past the pitch.",
+    "cta": "What surprised you most about the cost of taking an AI feature from demo to production?"
+  },
+  {
+    "id": "first-technical-hire",
+    "audience": "non-technical founders making their first engineering hire",
+    "problem": "The first technical hire decides whether your product is buildable for the next two years or rewritten in six months",
+    "persists": "because founders optimize for who can ship the MVP fastest instead of who makes decisions that still hold up after the third pivot",
+    "principle": "Hire someone who asks what you are trying to learn, not someone who immediately lists technologies. The best early engineers reduce scope, defer complexity, and tell you what not to build. Speed without judgment just gets you to the wrong place faster. The first hire sets the ceiling for everyone who comes after.",
+    "cta": "Founders: what did you get right or wrong about your very first technical hire?"
+  },
+  {
+    "id": "ai-cost-operations",
+    "audience": "CTOs and founders running AI features in production",
+    "problem": "The real cost of an AI feature is not building it, it is operating it month after month at scale",
+    "persists": "because pricing looks trivial on a single test call, then quietly multiplies across every user, retry, and oversized context window once real traffic arrives",
+    "principle": "Decide your cost ceiling before you ship, not after the bill arrives. Route cheap tasks to cheaper models, cache aggressively, trim context to what the model actually needs, and log cost per request so a spike is visible the same day. AI economics are an operations problem, not a model-selection problem.",
+    "cta": "What unexpectedly drove up your AI bill once real users showed up?"
+  },
+  {
+    "id": "shipping-over-perfect",
+    "audience": "founders and tech leads managing delivery velocity",
+    "problem": "Teams lose more time polishing things no user asked for than they ever lose to bugs",
+    "persists": "because polishing feels productive and safe, while putting an unfinished thing in front of a real user feels risky even though that is where the actual learning is",
+    "principle": "Ship the smallest version that a real user can react to, then let their reaction set the next priority. Perfect internal quality on a feature nobody needed is just expensive procrastination. The goal is not to avoid mistakes, it is to make them cheaply and early where they still cost almost nothing to fix.",
+    "cta": "What is something you over-polished that no user ever noticed or cared about?"
+  },
+  {
+    "id": "evaluating-dev-work",
+    "audience": "non-technical founders managing developers and agencies",
+    "problem": "Non-technical founders cannot tell whether the work they are paying for is solid or quietly accumulating debt that will surface later",
+    "persists": "because progress is reported in features shipped, while the things that decide long-term cost — tests, error handling, clear ownership — are invisible unless you know to ask",
+    "principle": "You do not need to read code to evaluate engineering. Ask what happens when this fails, how we would know, and how hard the next change will be. A developer who answers those clearly is protecting your future. One who waves them away is selling you speed today and a rewrite tomorrow.",
+    "cta": "Non-technical founders: how do you judge whether your dev work is actually solid?"
+  },
+  {
+    "id": "async-processing-at-scale",
+    "audience": "founders and CTOs building data-heavy or document-heavy products",
+    "problem": "Features that process large batches feel fine in testing, then time out and fail the moment a real user uploads real volume",
+    "persists": "because the work runs synchronously inside the request, so the first big job blocks everything and the user just sees a spinner that never resolves",
+    "principle": "Move heavy work off the request path and into a queue. On an AI ATS and CV analyzer I built, scoring resumes one-by-one in the request would have been unusable, so a Celery and Redis pipeline scores 1,000 resumes in under 10 minutes while the user gets progress instead of a timeout. Anything slow or bursty belongs in a background worker, not the HTTP handler.",
+    "cta": "What was the first feature you had to move from synchronous to background processing, and what forced it?"
+  },
+  {
+    "id": "voice-ai-latency",
+    "audience": "founders building voice or real-time AI products",
+    "problem": "Voice AI that feels magical in a recording feels broken the moment there is a one-second delay between a person speaking and the system responding",
+    "persists": "because each stage — speech to text, model reasoning, text to speech — adds latency, and stacking them naively turns a snappy demo into an awkward conversation nobody wants to have",
+    "principle": "Treat latency as a first-class feature, not an afterthought. On Jarvis, a voice-first assistant I built, hitting sub-300ms response meant streaming each stage instead of waiting for it to finish: local speech-to-text, a tight reasoning loop, and text-to-speech that starts speaking before the full answer is ready. In real-time products, perceived speed matters more than raw model quality.",
+    "cta": "For anyone building voice or real-time AI, where does your latency actually go — transcription, the model, or playback?"
+  },
+  {
+    "id": "agentic-tooling-roi",
+    "audience": "founders and operators considering agentic AI tools for real workflows",
+    "problem": "Agentic AI tools demo beautifully and then fail silently in production, doing the wrong thing without anyone noticing until the damage is done",
+    "persists": "because teams trust the agent to be right instead of building the validation and alerting that catches it when it is wrong",
+    "principle": "An agent is only as trustworthy as the guardrails around it. On an agentic tool I built that fetches jobs and drafts tailored proposals every 20 minutes, the part that made it usable was not the model, it was the validation layer: lint rules, auto-repair, and failure alerts so there were zero silent failures in production. Build the agent to fail loudly, not to be perfect.",
+    "cta": "Would you trust an AI agent to act in your business automatically, and what guardrail would you require first?"
   }
 ]

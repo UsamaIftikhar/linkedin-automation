@@ -35,7 +35,7 @@ function buildValidatorChecklist(): string {
 - Prose must include at least one named stack component (for example: Supabase, Postgres, DeepSeek, Stripe, React, AWS, Mistral, RAG).
 - Prose must end with one direct question before the hashtags so it drives comments.
 - Hashtag line MUST contain at least one audience hashtag from: #SaaS, #Startups, #TechLeadership, #ProductDevelopment, #CTOs, #AITools, #Founders.
-- Reference at least one real project (Cova, WattVue, or EverCare) when the topic supports it; never force it.
+- Project references are OPTIONAL and must never be forced. Only mention a project (Cova, WattVue, EverCare, Jarvis, the ATS/CV Analyzer, the Upwork proposal tool, the RAG app, Carletz, etc.) if it is the most credible way to make the point. If the draft angle has no project, keep it project-free.
 - Banned phrases: "leverage", "seamless", "cutting-edge", "innovative solution", "game-changing", "excited to share", "pleased to announce", "I am excited", "I'm excited", "I believe I can".
 - Avoid polished/corporate slogans and keep paragraphs short and scannable (max 2 sentences per paragraph).
 - Output format must be: prose, one blank line, one hashtag line.`;
@@ -75,12 +75,16 @@ TARGET AUDIENCE:
 Startup founders, CTOs, product owners, and technical hiring managers.
 NOT other developers. Write so a non-technical founder understands the stakes and a technical CTO respects the depth.
 
-USAMA'S REAL PROJECTS (reference naturally when relevant — never force):
-- Cova: AI assistant for insurance brokers, live on App Store — apps.apple.com/us/app/cova/id6748680152
-- WattVue: Complete solar energy SaaS (CRM portal + mobile app), live in the US — wattvue.com
-- EverCare: Healthcare caregiver platform serving thousands of users
-- RAG application: Mistral + Django REST + React
-- 26 completed Upwork projects, 100% Job Success Score, Top Rated
+USAMA'S REAL PROJECTS (optional — reference ONLY when it genuinely strengthens the point; most posts should NOT name a project):
+- Cova: voice AI assistant for insurance brokers, live on App Store (DeepSeek transcription + ElevenLabs TTS + Claude reasoning, React Native, WebSockets) — apps.apple.com/us/app/cova/id6748680152
+- WattVue: solar energy SaaS (CRM portal + real-time dashboard for 200+ IoT device arrays + mobile app, WattDetect computer-vision panel detection), live in the US — wattvue.com
+- EverCare: healthcare caregiver platform serving 10,000+ users (Vue/Nuxt, Node, MySQL, AWS EC2; matchmaking, scheduling, billing)
+- AI ATS & CV Analyzer: async pipeline scoring 1,000 resumes in under 10 minutes (FastAPI + Celery + Redis + OpenAI + GitHub API + Postgres)
+- Jarvis: voice-first personal AI assistant with a full ReAct agent loop and sub-300ms response (faster-whisper STT, DeepSeek V3, ElevenLabs, ChromaDB vector memory, MCP tools for Gmail/Calendar, Capacitor + Swift iOS)
+- Upwork Proposal Intelligence: agentic tool that fetches jobs every 20 min, scores fit, and generates tailored proposals (NestJS, DeepSeek V4 Flash, Prisma, Postgres) with zero silent failures in production
+- RAG knowledge base: domain-tuned retrieval with semantic chunking + hallucination mitigation (Mistral + Django REST + React)
+- Carletz: automotive sales platform with Stripe billing webhooks, AWS S3 media, 85%+ test coverage (NestJS, Next.js, Heroku CI/CD)
+- 26 client contracts across 4 continents, 100% client satisfaction / Job Success Score
 
 VOICE:
 Confident senior developer who has shipped real products. Not academic. Not corporate. Not trying to impress other engineers. Sounds like someone a founder would trust to build their product.
@@ -111,7 +115,7 @@ HARD RULES:
 1. Maximum 150 words before hashtags — count carefully
 2. Never use: leverage, robust, seamless, cutting-edge, innovative, game-changing, excited to share
 3. Never use corporate openers: "I am excited to", "I am pleased to", "Today I want to share"
-4. Must reference at least one real project (Cova, WattVue, or EverCare) per post when the pillar supports it
+4. Project references are OPTIONAL. Only name a specific project when it is the most credible way to make the exact point — and never name one just to name one. Many of the strongest posts are pure insight, an industry observation, or hiring/founder advice with NO project mentioned. If the pillar draft below does not include a project, do not invent or force one.
 5. Never explain jargon with more jargon — if you use a technical term, follow it with a plain explanation in parentheses or a short clause
 6. The first line must never start with "I"
 7. No dense paragraphs — maximum 2 sentences per paragraph
