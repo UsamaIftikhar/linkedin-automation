@@ -1,4 +1,5 @@
 import type { PostType } from "@/lib/post-types";
+import type { PipelineLogger } from "@/lib/pipeline-log";
 
 // deepseek-chat is a legacy alias that retires 2026-07-24 and routes to
 // deepseek-v4-flash non-thinking mode anyway. Set the default to the
@@ -67,6 +68,11 @@ type DeepSeekResponse = {
       reasoning_content?: string;
     };
   }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
   error?: {
     message?: string;
     code?: number | string;
@@ -151,6 +157,9 @@ export async function polishWithDeepSeek(options: {
   formatGuidance: string;
   revisionNotes?: string;
   signal?: AbortSignal;
+  /** When set, logs prompt → request → raw response → parsed content for this call. */
+  pipelineLog?: PipelineLogger;
+  attempt?: number;
 }): Promise<string> {
   const {
     apiKey,
@@ -164,6 +173,8 @@ export async function polishWithDeepSeek(options: {
     formatGuidance,
     revisionNotes,
     signal,
+    pipelineLog,
+    attempt = 1,
   } = options;
 
   const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
@@ -219,6 +230,23 @@ GLOBAL RULES (non-negotiable):
 ${validatorChecklist}
 ${revisionNotes ? `\nREVISION NOTES (this is a retry — fix exactly these issues, do NOT introduce new ones):\n${revisionNotes}\n\nWhen retrying:\n- Keep the hook if it was good.\n- Keep the structure intact.\n- Rewrite any paragraph that contains broken or incoherent sentences.\n- Do not invent new ideas. Fix what is broken.` : ""}`;
 
+  pipelineLog?.step("deepseek.prompt_built", {
+    attempt,
+    isRetry: Boolean(revisionNotes),
+    model,
+    postType,
+    systemPromptChars: SYSTEM_PROMPT.length,
+    userPromptChars: userPrompt.length,
+    draftInPromptChars: draft.length,
+    hasRevisionNotes: Boolean(revisionNotes),
+    revisionNotesPreview: revisionNotes?.slice(0, 300),
+    userPromptTail: userPrompt.slice(-400),
+  });
+  pipelineLog?.snapshot("deepseek.draft_input", draft, "draft_sent_in_user_prompt", {
+    attempt,
+    draftSource: revisionNotes ? "previous_model_output" : "pillar_template",
+  });
+
   const isReasoningModel = model === "deepseek-reasoner";
   const requestBody: Record<string, unknown> = {
     model,
@@ -243,6 +271,18 @@ ${revisionNotes ? `\nREVISION NOTES (this is a retry — fix exactly these issue
   if (!isReasoningModel && typeof temperature === "number") {
     requestBody.temperature = temperature;
   }
+
+  pipelineLog?.step("deepseek.request_send", {
+    attempt,
+    endpoint,
+    model,
+    max_tokens: requestBody.max_tokens,
+    temperature: requestBody.temperature ?? null,
+    thinking: requestBody.thinking,
+    stream: requestBody.stream,
+    timeoutMs: resolveDeepSeekTimeoutMs(),
+    messageCount: (requestBody.messages as unknown[]).length,
+  });
 
   // Hard per-call timeout. Vercel kills the function at 60s on Hobby, so a
   // hung DeepSeek connection MUST not block us past our wall-clock budget.
@@ -275,6 +315,15 @@ ${revisionNotes ? `\nREVISION NOTES (this is a retry — fix exactly these issue
 
   // Read as text first so we can surface the actual body when JSON parsing fails.
   const rawBody = await res.text();
+
+  pipelineLog?.step("deepseek.response_http", {
+    attempt,
+    httpStatus: res.status,
+    contentType: res.headers.get("content-type"),
+    rawBodyChars: rawBody.length,
+    rawBodyHead: rawBody.slice(0, 120),
+  });
+
   let data: DeepSeekResponse;
   try {
     data = JSON.parse(rawBody) as DeepSeekResponse;
@@ -296,8 +345,32 @@ ${revisionNotes ? `\nREVISION NOTES (this is a retry — fix exactly these issue
   }
 
   const message = data.choices?.[0]?.message;
-  const text = message?.content?.trim();
+  const rawContent = message?.content ?? "";
+  const reasoningContent = message?.reasoning_content ?? "";
+  const text = rawContent.trim();
   const finishReason = data.choices?.[0]?.finish_reason;
+
+  pipelineLog?.step("deepseek.response_parsed", {
+    attempt,
+    finishReason: finishReason ?? null,
+    usage: (data as { usage?: unknown }).usage ?? null,
+    rawContentChars: rawContent.length,
+    reasoningContentChars: reasoningContent.length,
+    trimmedContentChars: text.length,
+    hasReasoningContent: reasoningContent.length > 0,
+  });
+  pipelineLog?.snapshot("deepseek.model_output_raw", rawContent, "api_message.content_before_trim", {
+    attempt,
+    finishReason: finishReason ?? null,
+  });
+  if (reasoningContent.length > 0) {
+    pipelineLog?.snapshot(
+      "deepseek.reasoning_content",
+      reasoningContent,
+      "api_message.reasoning_content_not_used",
+      { attempt },
+    );
+  }
 
   if (!text) {
     throw new Error(
@@ -320,6 +393,11 @@ ${revisionNotes ? `\nREVISION NOTES (this is a retry — fix exactly these issue
       );
     }
   }
+
+  pipelineLog?.snapshot("deepseek.model_output_final", text, "returned_to_pipeline", {
+    attempt,
+    finishReason: finishReason ?? null,
+  });
 
   return text;
 }

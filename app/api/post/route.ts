@@ -49,6 +49,17 @@ async function resolvePostNow(request: Request): Promise<boolean> {
   return process.env.BUFFER_POST_NOW === "true";
 }
 
+function resolveDryRun(request: Request): boolean {
+  const url = new URL(request.url);
+  const q = url.searchParams.get("dryRun") ?? url.searchParams.get("dry_run");
+  if (q != null) {
+    const v = q.trim().toLowerCase();
+    if (["1", "true", "yes"].includes(v)) return true;
+    if (["0", "false", "no"].includes(v)) return false;
+  }
+  return process.env.DRY_RUN === "true";
+}
+
 function verifyPostSecret(request: Request): boolean {
   const secret = process.env.POST_API_SECRET?.trim();
   if (!secret || secret.length < 16) {
@@ -62,7 +73,7 @@ export async function GET(request: Request) {
     return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   const postNow = await resolvePostNow(request);
-  return runLinkedInAutomation(postNow);
+  return runLinkedInAutomation(postNow, resolveDryRun(request));
 }
 
 export async function POST(request: Request) {
@@ -70,5 +81,5 @@ export async function POST(request: Request) {
     return Response.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
   const postNow = await resolvePostNow(request);
-  return runLinkedInAutomation(postNow);
+  return runLinkedInAutomation(postNow, resolveDryRun(request));
 }

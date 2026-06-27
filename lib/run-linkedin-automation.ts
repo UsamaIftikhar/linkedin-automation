@@ -23,6 +23,7 @@ import {
   type PostLintResult,
 } from "@/lib/linkedin-post-rules";
 import { appendPostMemory, loadPostMemory } from "@/lib/post-memory";
+import { PipelineLogger, textFingerprint } from "@/lib/pipeline-log";
 import {
   pickPostType,
   postTypeGuidance,
@@ -390,6 +391,7 @@ async function generateDeepSeekPost(options: {
   runId: string;
   domain: DomainFocusSlug;
   deadline: number;
+  pipelineLog: PipelineLogger;
 }): Promise<{ text: string; attempts: number; lint: PostLintResult; timedOut: boolean }> {
   const maxAttempts = resolveGenerationMaxAttempts();
   let attempts = 0;
@@ -407,6 +409,11 @@ async function generateDeepSeekPost(options: {
   while (attempts < maxAttempts) {
     const remainingMs = options.deadline - Date.now();
     if (remainingMs < 8_000) {
+      options.pipelineLog.step("deepseek.budget_exhausted", {
+        attemptNext: attempts + 1,
+        maxAttempts,
+        remainingMs,
+      });
       console.warn(
         `[LinkedIn] Wall-clock budget exhausted before attempt ${attempts + 1}/${maxAttempts} (remaining=${remainingMs}ms). Bailing to deterministic repair.`,
       );
@@ -425,21 +432,44 @@ async function generateDeepSeekPost(options: {
     // with timedOut=true so the caller can fall back to the template draft.
     try {
       if (attempts === 1) {
-        text = await polishWithDeepSeek({ ...options, signal: attemptSignal });
+        text = await polishWithDeepSeek({
+          ...options,
+          signal: attemptSignal,
+          pipelineLog: options.pipelineLog,
+          attempt: attempts,
+        });
       } else {
         const revisionNotes = `The previous draft failed validation with these issues: ${lint.issues.join(
           "; ",
         )}. Rewrite the entire post so it passes every validator rule exactly. Do not keep weak lines from the failed draft. Remaining attempts including this one: ${maxAttempts - attempts + 1}.`;
+        options.pipelineLog.step("deepseek.retry_start", {
+          attempt: attempts,
+          previousFingerprint: textFingerprint(text),
+          lintIssues: lint.issues,
+        });
+        options.pipelineLog.snapshot(
+          "deepseek.retry_input",
+          text,
+          "failed_output_becomes_draft_for_retry",
+          { attempt: attempts },
+        );
         text = await polishWithDeepSeek({
           ...options,
           revisionNotes,
           draft: text,
           signal: attemptSignal,
+          pipelineLog: options.pipelineLog,
+          attempt: attempts,
         });
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       const isTimeout = /timed out|aborted|TimeoutError|AbortError/i.test(msg);
+      options.pipelineLog.step("deepseek.attempt_error", {
+        attempt: attempts,
+        isTimeout,
+        error: msg,
+      });
       console.warn(
         `[LinkedIn] DeepSeek attempt ${attempts}/${maxAttempts} failed (${isTimeout ? "timeout" : "error"}): ${msg}`,
       );
@@ -450,7 +480,18 @@ async function generateDeepSeekPost(options: {
     }
 
     lint = lintLinkedInPost(text);
+    options.pipelineLog.step("lint.after_deepseek_attempt", {
+      attempt: attempts,
+      lintOk: lint.ok,
+      issues: lint.issues,
+      warnings: lint.warnings,
+      wordCount: lint.wordCount,
+      hashtagCount: lint.hashtagCount,
+      charCount: lint.charCount,
+      outputFingerprint: textFingerprint(text),
+    });
     if (lint.ok) {
+      options.pipelineLog.step("deepseek.generation_success", { attempt: attempts });
       break;
     }
 
@@ -468,9 +509,23 @@ async function generateDeepSeekPost(options: {
     );
 
     // Try targeted in-process auto-repair before burning the next DeepSeek attempt.
+    const beforeAuto = text;
     const repaired = autoRepairPost(text, lint.issues);
     if (repaired !== text) {
+      options.pipelineLog.snapshot("repair.auto_before", beforeAuto, "before_auto_repair", {
+        attempt: attempts,
+        issues: lint.issues,
+      });
+      options.pipelineLog.snapshot("repair.auto_after", repaired, "after_auto_repair", {
+        attempt: attempts,
+        changed: true,
+      });
       const repairedLint = lintLinkedInPost(repaired);
+      options.pipelineLog.step("lint.after_auto_repair", {
+        attempt: attempts,
+        lintOk: repairedLint.ok,
+        issues: repairedLint.issues,
+      });
       if (repairedLint.ok) {
         console.log(
           `[LinkedIn] Auto-repair succeeded on attempt ${attempts}/${maxAttempts}`,
@@ -480,8 +535,20 @@ async function generateDeepSeekPost(options: {
         lint = repairedLint;
         break;
       }
+    } else {
+      options.pipelineLog.step("repair.auto_skipped", {
+        attempt: attempts,
+        reason: "no_applicable_auto_fix",
+      });
     }
   }
+
+  options.pipelineLog.step("deepseek.generation_complete", {
+    attempts,
+    timedOut,
+    finalFingerprint: text ? textFingerprint(text) : null,
+    lintOk: lint.ok,
+  });
 
   return { text, attempts, lint, timedOut };
 }
@@ -564,7 +631,10 @@ function logPublishedPost(info: {
  * 3) `createPost` on Buffer Publish GraphQL
  * 4) Optionally mirror to your Ideas GraphQL (`GRAPHQL_IDEAS_*`)
  */
-export async function runLinkedInAutomation(postNow: boolean): Promise<Response> {
+export async function runLinkedInAutomation(
+  postNow: boolean,
+  dryRun = process.env.DRY_RUN === "true",
+): Promise<Response> {
   const gqlKey = process.env.BUFFER_API_KEY?.trim();
   const gqlChannel = process.env.BUFFER_CHANNEL_ID?.trim();
   if (!gqlKey || !gqlChannel) {
@@ -597,13 +667,39 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
   const runStartedAt = Date.now();
   const deadline = runStartedAt + resolveRunBudgetMs();
   const runId = randomUUID();
-  const { entropy, domainSlug, postType } = await resolveContentEntropy(runId);
-  const draftMeta = buildDraftPost(new Date(), entropy);
-  const domainPrompt = domainFocusForPrompt(domainSlug);
+  const pipelineLog = new PipelineLogger(runId);
   const resolvedLlmModel =
     process.env.DEEPSEEK_MODEL?.trim() ||
     process.env.DeepseekModel?.trim() ||
     DEFAULT_DEEPSEEK_MODEL;
+
+  pipelineLog.step("pipeline.start", {
+    postNow,
+    dryRun,
+    templateOnly,
+    model: resolvedLlmModel,
+    temperature: resolveLlmTemperature(resolvedLlmModel),
+    maxAttempts: resolveGenerationMaxAttempts(),
+    runBudgetMs: resolveRunBudgetMs(),
+    deepseekTimeoutMs: process.env.DEEPSEEK_TIMEOUT_MS ?? "25000",
+    maxTokens: process.env.DEEPSEEK_MAX_TOKENS ?? "900(default)",
+  });
+
+  const { entropy, domainSlug, postType } = await resolveContentEntropy(runId);
+  const draftMeta = buildDraftPost(new Date(), entropy);
+  const domainPrompt = domainFocusForPrompt(domainSlug);
+
+  pipelineLog.step("content.pillar_picked", {
+    entropy,
+    pillarId: draftMeta.pillarId,
+    formatKey: draftMeta.formatKey,
+    formatIndex: draftMeta.formatIndex,
+    domain: domainSlug,
+    postType,
+    domainPrompt,
+  });
+  pipelineLog.snapshot("content.template_draft", draftMeta.text, "pillar_template_before_llm");
+
   let text = draftMeta.text;
   let source: "template" | "deepseek" = "template";
   let llmError: string | undefined;
@@ -624,11 +720,13 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
         runId,
         domain: domainSlug,
         deadline,
+        pipelineLog,
       });
       generationAttempts = result.attempts;
       if (result.text.trim().length > 0) {
         text = result.text;
         source = "deepseek";
+        pipelineLog.snapshot("content.after_deepseek_loop", text, "final_text_from_generation_loop");
       } else {
         // Every DeepSeek attempt errored (timeouts, network, etc.). Use the
         // template draft and rely on deterministic repair to produce a
@@ -637,6 +735,11 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
         console.warn(
           `[LinkedIn] All ${result.attempts} DeepSeek attempts failed; falling back to deterministic repair on template draft (timedOut=${result.timedOut}).`,
         );
+        pipelineLog.step("deepseek.all_attempts_failed", {
+          attempts: result.attempts,
+          timedOut: result.timedOut,
+          fallback: "pillar_template",
+        });
         text = draftMeta.text;
         source = "deepseek"; // keep so deterministic repair gate fires below
         llmError = result.timedOut ? "deepseek_all_attempts_timed_out" : "deepseek_all_attempts_failed";
@@ -649,6 +752,7 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
       console.warn(
         `[LinkedIn] generateDeepSeekPost threw unexpectedly: ${message}. Falling back to template + deterministic repair.`,
       );
+      pipelineLog.step("deepseek.unexpected_throw", { error: message });
       text = draftMeta.text;
       source = "deepseek";
       llmError = message;
@@ -668,18 +772,49 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
   const bannedHits = lintBannedPhrases(text);
 
   let lint = lintLinkedInPost(text);
+  pipelineLog.step("lint.before_deterministic_repair", {
+    lintOk: lint.ok,
+    issues: lint.issues,
+    source,
+    fingerprint: textFingerprint(text),
+  });
+
   let repairReason: string | undefined;
   if (!lint.ok && source === "deepseek") {
+    pipelineLog.snapshot(
+      "repair.deterministic_input",
+      text,
+      "text_entering_deterministic_repair",
+    );
     const repair = deterministicRepairPost(text, domainSlug);
+    pipelineLog.step("repair.deterministic_result", {
+      ok: repair.ok,
+      reason: repair.ok ? null : repair.reason,
+    });
     if (repair.ok) {
+      pipelineLog.snapshot(
+        "repair.deterministic_output",
+        repair.text,
+        "text_after_deterministic_repair",
+      );
       text = repair.text;
       lint = lintLinkedInPost(text);
+      pipelineLog.step("lint.after_deterministic_repair", {
+        lintOk: lint.ok,
+        issues: lint.issues,
+        fingerprint: textFingerprint(text),
+      });
     } else {
       repairReason = repair.reason;
     }
   }
   if (!lint.ok) {
     const maxAttempts = resolveGenerationMaxAttempts();
+    pipelineLog.step("pipeline.skip", {
+      reason: repairReason ? "coherence_check_failed" : "max_retries_exhausted",
+      repairReason: repairReason ?? null,
+      lintIssues: lint.issues,
+    });
     // Philosophy change: when DeepSeek's output is unsalvageable, we SKIP the
     // run rather than synthesize a publishable-but-incoherent post. The cost
     // of missing one cron is a fraction of the cost of putting word-salad in
@@ -707,6 +842,8 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
         // refuse to publish, so we can debug WHY the model is producing garbage.
         // Safe to expose because this endpoint is auth-gated by POST_API_SECRET.
         model_output: text,
+        run_id: runId,
+        pipeline_trace: pipelineLog.trace,
       },
       { status: 422 },
     );
@@ -720,8 +857,9 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
   // (DeepSeek → lint → repair → coherence check) without publishing anything.
   // Returns the would-be-posted text so we can eyeball quality across N runs.
   // Enable per-request with ?dryRun=true or globally with DRY_RUN=true.
-  const dryRunGlobal = process.env.DRY_RUN === "true";
-  if (dryRunGlobal) {
+  const dryRunActive = dryRun;
+  if (dryRunActive) {
+    pipelineLog.step("pipeline.dry_run_complete", { lintOk: lint.ok });
     return Response.json({
       ok: true,
       dry_run: true,
@@ -732,8 +870,17 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
       attempts: generationAttempts,
       llm_error: llmError,
       would_post: textToPost,
+      run_id: runId,
+      pipeline_trace: pipelineLog.trace,
     });
   }
+
+  pipelineLog.step("buffer.request", {
+    postNow,
+    scheduledDueAtIso: scheduledDueAtIso ?? null,
+    textChars: textToPost.length,
+    fingerprint: textFingerprint(textToPost),
+  });
 
   const gqlResult = await bufferCreatePostGraphql({
     apiKey: gqlKey,
@@ -745,6 +892,7 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
 
   if (!gqlResult.success) {
     const errMsg = gqlResult.message ?? "Buffer GraphQL create failed";
+    pipelineLog.step("buffer.error", { error: errMsg });
     return Response.json(
       {
         ok: false,
@@ -833,6 +981,11 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
     ideaId,
   });
 
+  pipelineLog.step("pipeline.success", {
+    bufferPostId: updateId,
+    elapsedMs: Date.now() - runStartedAt,
+  });
+
   return Response.json({
     ok: true,
     source,
@@ -844,5 +997,6 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
     metadata,
     warnings: Object.keys(warnings).length > 0 ? warnings : undefined,
     text_preview: textToPost.slice(0, 400),
+    run_id: runId,
   });
 }
