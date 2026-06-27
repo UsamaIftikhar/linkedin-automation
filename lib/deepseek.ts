@@ -244,11 +244,17 @@ ${revisionNotes ? `\nREVISION NOTES:\n${revisionNotes}` : ""}`;
     throw e;
   }
 
+  // Read as text first so we can surface the actual body when JSON parsing fails.
+  const rawBody = await res.text();
   let data: DeepSeekResponse;
   try {
-    data = (await res.json()) as DeepSeekResponse;
+    data = JSON.parse(rawBody) as DeepSeekResponse;
   } catch {
-    throw new Error(`DeepSeek returned non-JSON (HTTP ${res.status})`);
+    const ct = res.headers.get("content-type") ?? "unknown";
+    const snippet = rawBody.slice(0, 240).replace(/\s+/g, " ").trim();
+    throw new Error(
+      `DeepSeek returned non-JSON (HTTP ${res.status}, content-type=${ct}). Body snippet: "${snippet || "<empty>"}". Likely an HTML error/maintenance page or an unknown model name — try DEEPSEEK_MODEL=deepseek-chat.`,
+    );
   }
 
   if (!res.ok) {
