@@ -56,8 +56,13 @@ function resolveLlmTemperature(model: string): number | undefined {
     process.env.DEEPSEEK_TEMPERATURE?.trim() ??
     process.env.LLM_TEMPERATURE?.trim();
   if (!raw) {
-    // Creative writing default. DeepSeek ignores this for `deepseek-reasoner`.
-    return model === "deepseek-reasoner" ? undefined : 1.5;
+    // Default lowered from 1.5 → 0.4. Higher temperatures cause Flash-class
+    // models to tail-collapse: the post starts coherent and degenerates into
+    // word-salad ("loire side potential", "re-calks", "oversacificing"). At
+    // 0.4 the model stays anchored to coherent next-token probabilities.
+    // Creativity comes from the pillar/domain/post-type variation, not from
+    // temperature. DeepSeek ignores this for `deepseek-reasoner`.
+    return model === "deepseek-reasoner" ? undefined : 0.4;
   }
   const parsed = Number(raw);
   return Number.isFinite(parsed) ? parsed : undefined;
@@ -707,6 +712,25 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
   const textToPost = applyOptionalPostNonce(text);
 
   const scheduledDueAtIso = postNow ? undefined : queueDueAtIso();
+
+  // DRY_RUN: short-circuit before Buffer so we can validate the full pipeline
+  // (DeepSeek → lint → repair → coherence check) without publishing anything.
+  // Returns the would-be-posted text so we can eyeball quality across N runs.
+  // Enable per-request with ?dryRun=true or globally with DRY_RUN=true.
+  const dryRunGlobal = process.env.DRY_RUN === "true";
+  if (dryRunGlobal) {
+    return Response.json({
+      ok: true,
+      dry_run: true,
+      source,
+      buffer_now: postNow,
+      scheduled_due_at: scheduledDueAtIso,
+      lint,
+      attempts: generationAttempts,
+      llm_error: llmError,
+      would_post: textToPost,
+    });
+  }
 
   const gqlResult = await bufferCreatePostGraphql({
     apiKey: gqlKey,

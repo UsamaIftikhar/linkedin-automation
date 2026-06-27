@@ -47,9 +47,12 @@ function resolveMaxTokens(model: string): number {
   if (Number.isFinite(parsed) && parsed > 0) {
     return parsed;
   }
-  // Reasoner spends output budget on reasoning_content too.
-  // Chat-only generation can use a much tighter cap.
-  return model === "deepseek-reasoner" ? 8000 : 1500;
+  // Tight cap intentionally: a well-formed post is ~330 tokens (130 prose words +
+  // hashtags + structure markers). Larger budgets correlate with tail collapse
+  // in Flash-class models — the model fills the space with degraded tokens
+  // instead of stopping. 900 leaves ~3x headroom but doesn't invite rambling.
+  // Reasoner spends additional budget on internal reasoning_content.
+  return model === "deepseek-reasoner" ? 8000 : 900;
 }
 
 type DeepSeekResponse = {
@@ -175,20 +178,40 @@ DRAFT ANGLE (rewrite freely, keep only the useful technical direction):
 ${draft}
 ---
 
-Reminder:
-- Make the post feel human-written and technically credible.
-- Match this author's style: practical, scannable, sometimes explanatory, sometimes reflective, always grounded in real engineering work.
-- Include specific implementation details and tradeoffs.
-- Prefer short paragraphs. Use section labels or hyphen bullets only when they improve readability.
-- Prefer plain English over polished/corporate wording.
-- If a line sounds slogan-like, simplify it.
-- Do not force a question at the end.
-- End with 5-7 hashtags on a separate final line, including at least 2 audience hashtags (#SaaS, #Startups, #TechLeadership, #ProductDevelopment, #CTOs, #AITools) and at least 2 technical hashtags.
-- HARD CAP: 130 prose words. Count before responding. If your draft exceeds 130 words, cut it before emitting the hashtag line. Posts longer than 150 words are auto-rejected.
-- The final line MUST be the hashtag line. Never end mid-sentence. If you are running long, drop sentences from the middle — never skip the hashtags.
+OUTPUT THIS EXACT STRUCTURE. Each section is mandatory:
+
+HOOK (1 line, max 16 words):
+One punchy statement or question that makes a founder/CTO stop scrolling.
+Must NOT start with "I".
+No hashtags. No emojis. No markdown.
+
+STORY (2 paragraphs, max 3 sentences each, blank line between paragraphs):
+Concrete technical situation with named tools (Postgres, AWS Lambda, DeepSeek, Stripe, etc.).
+Each sentence max 25 words.
+Each sentence must be grammatically complete and make sense in isolation.
+Never trail off mid-idea. If a sentence isn't coherent, rewrite it before continuing.
+
+TAKEAWAY (1-2 sentences):
+The clear lesson a founder or CTO should walk away with. Connects directly to the story.
+
+QUESTION (1 line, ends with "?"):
+One direct question to the reader. Must relate to the post topic.
+
+HASHTAGS (final line ONLY):
+5-7 space-separated hashtags on a single dedicated final line.
+Format: #Tag1 #Tag2 #Tag3 — include at least 2 audience hashtags (#SaaS, #Startups, #TechLeadership, #ProductDevelopment, #CTOs, #AITools) and at least 2 technical hashtags.
+No hashtags ANYWHERE else in the post.
+
+GLOBAL RULES (non-negotiable):
+- Total prose: 110–150 words (lint caps at 220 — staying near 130 is safest).
+- NO MARKDOWN: no **bold**, no *italic*, no \`code\`, no --- separators, no [links](...).
+- NO INVENTED WORDS: never output pseudo-technical neologisms ("re-calks", "loire side potential", "oversacificing"). If you don't know the precise term, use a plain-English description.
+- NO TAIL COLLAPSE: every sentence must be one a senior engineer would say out loud to a CTO. Before emitting the next sentence, read the previous one back to yourself. If it doesn't make complete grammatical sense, REWRITE IT.
+- NEVER trail off. NEVER skip the hashtag line. If you're running long, drop sentences from the middle — keep the structure intact.
+- SELF-CHECK before submitting: scan your output. If ANY sentence is incoherent, rewrite the post from scratch. Do not submit a post with broken sentences under any circumstances.
 
 ${validatorChecklist}
-${revisionNotes ? `\nREVISION NOTES:\n${revisionNotes}` : ""}`;
+${revisionNotes ? `\nREVISION NOTES (this is a retry — fix exactly these issues, do NOT introduce new ones):\n${revisionNotes}\n\nWhen retrying:\n- Keep the hook if it was good.\n- Keep the structure intact.\n- Rewrite any paragraph that contains broken or incoherent sentences.\n- Do not invent new ideas. Fix what is broken.` : ""}`;
 
   const isReasoningModel = model === "deepseek-reasoner";
   const requestBody: Record<string, unknown> = {
