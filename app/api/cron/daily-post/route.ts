@@ -29,8 +29,9 @@ export async function GET(request: Request) {
       reason: "weekend_skip",
     });
   }
-  const postNow = process.env.BUFFER_POST_NOW === "true";
-  return runLinkedInAutomation(postNow);
+  // Cron always queues to Buffer — never instant-publish. Manual /api/post may
+  // opt in via ?now=true; BUFFER_POST_NOW must not affect scheduled cron runs.
+  return runLinkedInAutomation(false);
 }
 
 export async function POST(request: Request) {
@@ -45,6 +46,5 @@ export async function POST(request: Request) {
       reason: "weekend_skip",
     });
   }
-  const postNow = process.env.BUFFER_POST_NOW === "true";
-  return runLinkedInAutomation(postNow);
+  return runLinkedInAutomation(false);
 }

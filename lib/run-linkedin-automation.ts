@@ -24,6 +24,7 @@ import {
 } from "@/lib/linkedin-post-rules";
 import { appendPostMemory, loadPostMemory } from "@/lib/post-memory";
 import { PipelineLogger, textFingerprint } from "@/lib/pipeline-log";
+import { reviewPostCoherence } from "@/lib/post-reviewer";
 import {
   pickPostType,
   postTypeGuidance,
@@ -439,24 +440,23 @@ async function generateDeepSeekPost(options: {
           attempt: attempts,
         });
       } else {
-        const revisionNotes = `The previous draft failed validation with these issues: ${lint.issues.join(
-          "; ",
-        )}. Rewrite the entire post so it passes every validator rule exactly. Do not keep weak lines from the failed draft. Remaining attempts including this one: ${maxAttempts - attempts + 1}.`;
+        const revisionNotes = `The previous attempt produced incoherent text. Ignore it completely. Generate a brand new post from the original angle. These lint issues must not recur: ${lint.issues.join("; ")}. Remaining attempts including this one: ${maxAttempts - attempts + 1}.`;
         options.pipelineLog.step("deepseek.retry_start", {
           attempt: attempts,
-          previousFingerprint: textFingerprint(text),
+          previousOutputFingerprint: textFingerprint(text),
+          retryDraftSource: "pillar_template",
           lintIssues: lint.issues,
         });
         options.pipelineLog.snapshot(
-          "deepseek.retry_input",
-          text,
-          "failed_output_becomes_draft_for_retry",
+          "deepseek.retry_draft_reset",
+          options.draft,
+          "pillar_template_fresh_on_retry",
           { attempt: attempts },
         );
         text = await polishWithDeepSeek({
           ...options,
           revisionNotes,
-          draft: text,
+          draft: options.draft,
           signal: attemptSignal,
           pipelineLog: options.pipelineLog,
           attempt: attempts,
@@ -491,8 +491,36 @@ async function generateDeepSeekPost(options: {
       outputFingerprint: textFingerprint(text),
     });
     if (lint.ok) {
-      options.pipelineLog.step("deepseek.generation_success", { attempt: attempts });
-      break;
+      const review = await reviewPostCoherence({
+        apiKey: options.apiKey,
+        baseUrl: options.baseUrl,
+        model: options.model,
+        postText: text,
+        signal: attemptSignal,
+      });
+      options.pipelineLog.step("review.semantic", {
+        attempt: attempts,
+        coherent: review.coherent,
+        readable: review.readable,
+        professional: review.professional,
+        issues: review.issues,
+        passed: review.coherent && review.readable && review.professional,
+      });
+      if (review.coherent && review.readable && review.professional) {
+        options.pipelineLog.step("deepseek.generation_success", { attempt: attempts });
+        break;
+      }
+      console.error("[LinkedIn] Reviewer rejected post", {
+        runId: options.runId,
+        attempt: attempts,
+        issues: review.issues,
+        head: text.slice(0, 120),
+      });
+      lint = {
+        ...lint,
+        ok: false,
+        issues: [...lint.issues, ...review.issues],
+      };
     }
 
     console.error(
@@ -527,13 +555,40 @@ async function generateDeepSeekPost(options: {
         issues: repairedLint.issues,
       });
       if (repairedLint.ok) {
-        console.log(
-          `[LinkedIn] Auto-repair succeeded on attempt ${attempts}/${maxAttempts}`,
-          { runId: options.runId, repairedIssues: lint.issues },
-        );
-        text = repaired;
-        lint = repairedLint;
-        break;
+        const review = await reviewPostCoherence({
+          apiKey: options.apiKey,
+          baseUrl: options.baseUrl,
+          model: options.model,
+          postText: repaired,
+          signal: attemptSignal,
+        });
+        options.pipelineLog.step("review.semantic_after_auto_repair", {
+          attempt: attempts,
+          coherent: review.coherent,
+          readable: review.readable,
+          professional: review.professional,
+          issues: review.issues,
+          passed: review.coherent && review.readable && review.professional,
+        });
+        if (review.coherent && review.readable && review.professional) {
+          console.log(
+            `[LinkedIn] Auto-repair succeeded on attempt ${attempts}/${maxAttempts}`,
+            { runId: options.runId, repairedIssues: lint.issues },
+          );
+          text = repaired;
+          lint = repairedLint;
+          break;
+        }
+        console.error("[LinkedIn] Reviewer rejected auto-repaired post", {
+          runId: options.runId,
+          attempt: attempts,
+          issues: review.issues,
+        });
+        lint = {
+          ...repairedLint,
+          ok: false,
+          issues: [...repairedLint.issues, ...review.issues],
+        };
       }
     } else {
       options.pipelineLog.step("repair.auto_skipped", {
@@ -804,6 +859,45 @@ export async function runLinkedInAutomation(
         issues: lint.issues,
         fingerprint: textFingerprint(text),
       });
+      if (lint.ok && deepseekKey) {
+        const finalReview = await reviewPostCoherence({
+          apiKey: deepseekKey,
+          baseUrl: process.env.DEEPSEEK_BASE_URL?.trim(),
+          model: resolvedLlmModel,
+          postText: text,
+        });
+        pipelineLog.step("review.semantic_after_deterministic_repair", {
+          coherent: finalReview.coherent,
+          readable: finalReview.readable,
+          professional: finalReview.professional,
+          issues: finalReview.issues,
+          passed:
+            finalReview.coherent && finalReview.readable && finalReview.professional,
+        });
+        if (!finalReview.coherent || !finalReview.professional) {
+          pipelineLog.step("pipeline.skip", {
+            reason: "semantic_review_failed",
+            issues: finalReview.issues,
+          });
+          return Response.json(
+            {
+              ok: false,
+              reason: "semantic_review_failed" as const,
+              error: "Deterministic repair output failed semantic review.",
+              issues: finalReview.issues,
+              lint,
+              source,
+              attempts: generationAttempts,
+              skipped: true,
+              model_used: resolvedLlmModel,
+              model_output: text,
+              run_id: runId,
+              pipeline_trace: pipelineLog.trace,
+            },
+            { status: 422 },
+          );
+        }
+      }
     } else {
       repairReason = repair.reason;
     }
