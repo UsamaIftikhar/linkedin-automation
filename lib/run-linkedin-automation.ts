@@ -78,9 +78,9 @@ function resolveGenerationMaxAttempts(): number {
   if (Number.isFinite(parsed) && parsed >= 1) {
     return Math.min(Math.floor(parsed), 10);
   }
-  // Default lowered from 5 → 3 so we fit inside Vercel Hobby's 60s function cap
-  // even when DeepSeek is slow. Deterministic repair covers the long tail.
-  return 3;
+  // Default 2: attempt 1 + one fresh retry for true incoherence only.
+  // Formatting fixes are handled deterministically on attempt 1.
+  return 2;
 }
 
 /**
@@ -340,17 +340,114 @@ function deterministicRepairPost(text: string, domain: DomainFocusSlug): RepairR
   return { ok: true, text: finalText };
 }
 
+const FORMATTING_ISSUE_MARKERS = [
+  "missing hashtags",
+  "dedicated final line",
+  "too dense",
+  "audience hashtag",
+  "post must contain a question",
+] as const;
+
+function isOnlyFormatting(issues: string[]): boolean {
+  if (issues.length === 0) {
+    return false;
+  }
+  return issues.every((issue) =>
+    FORMATTING_ISSUE_MARKERS.some((marker) =>
+      issue.toLowerCase().includes(marker),
+    ),
+  );
+}
+
+function fixDenseParagraphs(prose: string): string {
+  const paragraphs = prose
+    .split(/\n\s*\n/)
+    .map((p) => p.trim())
+    .filter(Boolean);
+  return paragraphs
+    .flatMap((paragraph) => {
+      const sentences = paragraph
+        .split(/(?<=[.!?])\s+/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+      if (sentences.length <= 2) {
+        return [paragraph];
+      }
+      const chunks: string[] = [];
+      for (let i = 0; i < sentences.length; i += 2) {
+        chunks.push(sentences.slice(i, i + 2).join(" "));
+      }
+      return chunks;
+    })
+    .join("\n\n");
+}
+
+function fixHashtagLine(text: string, domain: DomainFocusSlug): string {
+  const { min: hashMin, max: hashMax } = resolveHashtagBounds();
+  const collected = extractHashtags(text);
+  let prose = text.replace(/#[A-Za-z][A-Za-z0-9_]*/g, " ");
+  prose = prose
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  const uniqueTags = [...collected];
+  for (const tag of domainHashtags(domain)) {
+    if (uniqueTags.length >= hashMax) {
+      break;
+    }
+    if (!uniqueTags.includes(tag)) {
+      uniqueTags.push(tag);
+    }
+  }
+  while (uniqueTags.length < hashMin) {
+    let added = false;
+    for (const tag of domainHashtags(domain)) {
+      if (!uniqueTags.includes(tag)) {
+        uniqueTags.push(tag);
+        added = true;
+        if (uniqueTags.length >= hashMin) {
+          break;
+        }
+      }
+    }
+    if (!added) {
+      break;
+    }
+  }
+
+  const hashtagLine = uniqueTags.slice(0, hashMax).join(" ").trim();
+  return hashtagLine ? `${prose}\n\n${hashtagLine}` : prose;
+}
+
 /**
- * Targeted in-process repair for the most common Flash-class mistakes.
- *
- * Runs INSIDE the retry loop (cheaper than another DeepSeek call) so we can avoid
- * burning a full attempt on a fix the lint can do deterministically.
- *
- * Distinct from `deterministicRepairPost`, which is a more aggressive last-ditch
- * rewrite executed only after retries are exhausted.
+ * Targeted in-process repair for formatting-only lint failures.
+ * Safe on attempt-1 coherent posts — does not rewrite meaning.
  */
-function autoRepairPost(post: string, issues: string[]): string {
+function autoRepairPost(
+  post: string,
+  issues: string[],
+  domain: DomainFocusSlug,
+): string {
   let repaired = post;
+
+  const needsHashtagFix = issues.some(
+    (i) =>
+      i.toLowerCase().includes("missing hashtags") ||
+      i.toLowerCase().includes("dedicated final line"),
+  );
+  if (needsHashtagFix) {
+    repaired = fixHashtagLine(repaired, domain);
+  }
+
+  if (issues.some((i) => i.toLowerCase().includes("too dense"))) {
+    const { prose, tagBlock } = splitProseAndHashtagBlock(repaired);
+    const fixedProse = fixDenseParagraphs(prose);
+    repaired = tagBlock.trim()
+      ? `${fixedProse}\n\n${tagBlock.trim()}`
+      : fixedProse;
+  }
 
   // Fix: opening line starts with "I"
   if (issues.some((i) => i.includes('must not start with "I"'))) {
@@ -360,23 +457,80 @@ function autoRepairPost(post: string, issues: string[]): string {
     }
   }
 
-  // Fix: missing audience hashtag — append two safe defaults to the trailing tag line
-  if (issues.some((i) => i.includes("audience hashtag"))) {
-    repaired = repaired.replace(
-      /(#\w+\s*)+$/,
-      (match) => `${match.trim()} #SaaS #Startups`,
-    );
+  // Fix: missing audience hashtag — append defaults to the trailing tag line
+  if (issues.some((i) => i.toLowerCase().includes("audience hashtag"))) {
+    if (/(#\w+\s*)+$/.test(repaired)) {
+      repaired = repaired.replace(
+        /(#\w+\s*)+$/,
+        (match) => `${match.trim()} #SaaS #Startups`,
+      );
+    } else {
+      repaired = fixHashtagLine(repaired, domain);
+    }
   }
 
-  // Fix: missing engagement question — insert a generic one above the hashtag line
+  // Fix: missing engagement question — insert above the hashtag line
   if (issues.some((i) => i.toLowerCase().includes("question"))) {
-    repaired = repaired.replace(
-      /(#\w+\s*)+$/,
-      (match) => `\nHave you run into this in your own product?\n\n${match}`,
-    );
+    if (/(#\w+\s*)+$/.test(repaired)) {
+      repaired = repaired.replace(
+        /(#\w+\s*)+$/,
+        (match) => `\nHave you run into this in your own product?\n\n${match}`,
+      );
+    } else {
+      repaired = `${repaired.trim()}\n\nHave you run into this in your own product?`;
+    }
   }
 
   return repaired.trim();
+}
+
+async function tryAcceptWithReview(
+  candidateText: string,
+  candidateLint: PostLintResult,
+  ctx: {
+    pipelineLog: PipelineLogger;
+    attempt: number;
+    runId: string;
+    signal: AbortSignal;
+    stepPrefix: string;
+  },
+): Promise<{ accepted: boolean; reviewIncoherent: boolean; reviewIssues: string[] }> {
+  if (!candidateLint.ok) {
+    return { accepted: false, reviewIncoherent: false, reviewIssues: [] };
+  }
+
+  const review = await reviewPostCoherence({
+    postText: candidateText,
+    signal: ctx.signal,
+  });
+  const passed =
+    review.coherent && review.readable && review.professional;
+  ctx.pipelineLog.step(`${ctx.stepPrefix}.semantic`, {
+    attempt: ctx.attempt,
+    coherent: review.coherent,
+    readable: review.readable,
+    professional: review.professional,
+    issues: review.issues,
+    passed,
+  });
+
+  if (passed) {
+    ctx.pipelineLog.step("deepseek.generation_success", { attempt: ctx.attempt });
+    return { accepted: true, reviewIncoherent: false, reviewIssues: [] };
+  }
+
+  console.error("[LinkedIn] Reviewer rejected post", {
+    runId: ctx.runId,
+    attempt: ctx.attempt,
+    step: ctx.stepPrefix,
+    issues: review.issues,
+    head: candidateText.slice(0, 120),
+  });
+  return {
+    accepted: false,
+    reviewIncoherent: true,
+    reviewIssues: review.issues,
+  };
 }
 
 async function generateDeepSeekPost(options: {
@@ -490,56 +644,42 @@ async function generateDeepSeekPost(options: {
       charCount: lint.charCount,
       outputFingerprint: textFingerprint(text),
     });
-    if (lint.ok) {
-      const review = await reviewPostCoherence({
-        apiKey: options.apiKey,
-        baseUrl: options.baseUrl,
-        model: options.model,
-        postText: text,
-        signal: attemptSignal,
-      });
-      options.pipelineLog.step("review.semantic", {
-        attempt: attempts,
-        coherent: review.coherent,
-        readable: review.readable,
-        professional: review.professional,
-        issues: review.issues,
-        passed: review.coherent && review.readable && review.professional,
-      });
-      if (review.coherent && review.readable && review.professional) {
-        options.pipelineLog.step("deepseek.generation_success", { attempt: attempts });
-        break;
-      }
-      console.error("[LinkedIn] Reviewer rejected post", {
-        runId: options.runId,
-        attempt: attempts,
-        issues: review.issues,
-        head: text.slice(0, 120),
-      });
+
+    const reviewCtx = {
+      pipelineLog: options.pipelineLog,
+      attempt: attempts,
+      runId: options.runId,
+      signal: attemptSignal,
+      stepPrefix: "review",
+    };
+
+    // Path A: lint already passes — reviewer is the only gate.
+    let accept = await tryAcceptWithReview(text, lint, reviewCtx);
+    if (accept.accepted) {
+      break;
+    }
+    if (lint.ok && accept.reviewIncoherent) {
       lint = {
         ...lint,
         ok: false,
-        issues: [...lint.issues, ...review.issues],
+        issues: [...lint.issues, ...accept.reviewIssues],
       };
+      options.pipelineLog.step("generation.regenerate_decision", {
+        attempt: attempts,
+        shouldRegenerate: attempts < maxAttempts,
+        reason: "reviewer_rejected_lint_pass_post",
+      });
+      if (attempts < maxAttempts) {
+        continue;
+      }
+      break;
     }
 
-    console.error(
-      `[LinkedIn] Lint failure on attempt ${attempts}/${maxAttempts}:`,
-      {
-        runId: options.runId,
-        domain: options.domain,
-        postType: options.postType,
-        issues: lint.issues,
-        wordCount: lint.wordCount,
-        hashtagCount: lint.hashtagCount,
-        firstLine: text.split("\n")[0]?.substring(0, 80) ?? "",
-      },
-    );
-
-    // Try targeted in-process auto-repair before burning the next DeepSeek attempt.
+    // Path B: formatting repair on the CURRENT text — never discard attempt-1
+    // coherent prose for a formatting-only lint failure.
     const beforeAuto = text;
-    const repaired = autoRepairPost(text, lint.issues);
-    if (repaired !== text) {
+    const repaired = autoRepairPost(text, lint.issues, options.domain);
+    if (repaired !== beforeAuto) {
       options.pipelineLog.snapshot("repair.auto_before", beforeAuto, "before_auto_repair", {
         attempt: attempts,
         issues: lint.issues,
@@ -548,53 +688,79 @@ async function generateDeepSeekPost(options: {
         attempt: attempts,
         changed: true,
       });
-      const repairedLint = lintLinkedInPost(repaired);
-      options.pipelineLog.step("lint.after_auto_repair", {
-        attempt: attempts,
-        lintOk: repairedLint.ok,
-        issues: repairedLint.issues,
-      });
-      if (repairedLint.ok) {
-        const review = await reviewPostCoherence({
-          apiKey: options.apiKey,
-          baseUrl: options.baseUrl,
-          model: options.model,
-          postText: repaired,
-          signal: attemptSignal,
-        });
-        options.pipelineLog.step("review.semantic_after_auto_repair", {
-          attempt: attempts,
-          coherent: review.coherent,
-          readable: review.readable,
-          professional: review.professional,
-          issues: review.issues,
-          passed: review.coherent && review.readable && review.professional,
-        });
-        if (review.coherent && review.readable && review.professional) {
-          console.log(
-            `[LinkedIn] Auto-repair succeeded on attempt ${attempts}/${maxAttempts}`,
-            { runId: options.runId, repairedIssues: lint.issues },
-          );
-          text = repaired;
-          lint = repairedLint;
-          break;
-        }
-        console.error("[LinkedIn] Reviewer rejected auto-repaired post", {
-          runId: options.runId,
-          attempt: attempts,
-          issues: review.issues,
-        });
-        lint = {
-          ...repairedLint,
-          ok: false,
-          issues: [...repairedLint.issues, ...review.issues],
-        };
-      }
     } else {
       options.pipelineLog.step("repair.auto_skipped", {
         attempt: attempts,
         reason: "no_applicable_auto_fix",
       });
+    }
+
+    const repairedLint = lintLinkedInPost(repaired);
+    options.pipelineLog.step("lint.after_auto_repair", {
+      attempt: attempts,
+      lintOk: repairedLint.ok,
+      issues: repairedLint.issues,
+      onlyFormatting: isOnlyFormatting(repairedLint.issues),
+    });
+
+    accept = await tryAcceptWithReview(repaired, repairedLint, {
+      ...reviewCtx,
+      stepPrefix: "review.after_auto_repair",
+    });
+    if (accept.accepted) {
+      text = repaired;
+      lint = repairedLint;
+      break;
+    }
+
+    const combinedIssues = [
+      ...new Set([
+        ...lint.issues,
+        ...repairedLint.issues,
+        ...accept.reviewIssues,
+      ]),
+    ];
+    const shouldRegenerate =
+      !isOnlyFormatting(combinedIssues) || accept.reviewIncoherent;
+
+    options.pipelineLog.step("generation.regenerate_decision", {
+      attempt: attempts,
+      shouldRegenerate,
+      isOnlyFormatting: isOnlyFormatting(combinedIssues),
+      combinedIssues,
+      reviewIncoherent: accept.reviewIncoherent,
+    });
+
+    console.error(
+      `[LinkedIn] Lint failure on attempt ${attempts}/${maxAttempts}:`,
+      {
+        runId: options.runId,
+        domain: options.domain,
+        postType: options.postType,
+        issues: combinedIssues,
+        wordCount: repairedLint.wordCount,
+        hashtagCount: repairedLint.hashtagCount,
+        firstLine: text.split("\n")[0]?.substring(0, 80) ?? "",
+        shouldRegenerate,
+      },
+    );
+
+    if (!shouldRegenerate) {
+      text = repaired;
+      lint = repairedLint;
+      break;
+    }
+
+    if (attempts >= maxAttempts) {
+      text = repaired;
+      lint = accept.reviewIncoherent
+        ? {
+            ...repairedLint,
+            ok: false,
+            issues: [...repairedLint.issues, ...accept.reviewIssues],
+          }
+        : repairedLint;
+      break;
     }
   }
 
@@ -861,9 +1027,6 @@ export async function runLinkedInAutomation(
       });
       if (lint.ok && deepseekKey) {
         const finalReview = await reviewPostCoherence({
-          apiKey: deepseekKey,
-          baseUrl: process.env.DEEPSEEK_BASE_URL?.trim(),
-          model: resolvedLlmModel,
           postText: text,
         });
         pipelineLog.step("review.semantic_after_deterministic_repair", {
