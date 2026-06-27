@@ -700,6 +700,9 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
         attempts: generationAttempts || maxAttempts,
         skipped: Boolean(repairReason),
         llm_error: llmError,
+        // Diagnostic: confirms which model was actually used. Helps tell apart
+        // "Flash is rambling" from "Pro is also rambling" when escalating.
+        model_used: resolvedLlmModel,
         // Diagnostic: surface the full DeepSeek output (or template draft) when we
         // refuse to publish, so we can debug WHY the model is producing garbage.
         // Safe to expose because this endpoint is auth-gated by POST_API_SECRET.

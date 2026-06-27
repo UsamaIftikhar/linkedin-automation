@@ -1,6 +1,10 @@
 import type { PostType } from "@/lib/post-types";
 
-export const DEFAULT_DEEPSEEK_MODEL = "deepseek-chat";
+// deepseek-chat is a legacy alias that retires 2026-07-24 and routes to
+// deepseek-v4-flash non-thinking mode anyway. Set the default to the
+// canonical current model so deployments that forget to set DEEPSEEK_MODEL
+// don't break on the deprecation date.
+export const DEFAULT_DEEPSEEK_MODEL = "deepseek-v4-flash";
 const DEFAULT_BASE_URL = "https://api.deepseek.com";
 
 function resolveWordBounds(): { min: number; max: number } {
@@ -72,6 +76,8 @@ type DeepSeekResponse = {
 };
 
 const SYSTEM_PROMPT = `
+CRITICAL INSTRUCTION: Output only the final LinkedIn post. No preamble, no explanation, no reasoning, no meta-commentary, no "Here is the post:" prefix. Start directly with the hook line. End with the hashtag line. Nothing before, nothing after.
+
 You write LinkedIn posts for Usama Iftikhar, a Senior Full-Stack AI Developer from Pakistan who builds AI-powered SaaS products for founders and CTOs.
 
 TARGET AUDIENCE:
