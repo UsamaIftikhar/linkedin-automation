@@ -121,6 +121,15 @@ HARD RULES:
 7. No dense paragraphs — maximum 2 sentences per paragraph
 `.trim();
 
+function resolveDeepSeekTimeoutMs(): number {
+  const raw = process.env.DEEPSEEK_TIMEOUT_MS?.trim();
+  const parsed = raw ? Number(raw) : NaN;
+  if (Number.isFinite(parsed) && parsed >= 5_000) {
+    return Math.min(parsed, 55_000);
+  }
+  return 25_000;
+}
+
 export async function polishWithDeepSeek(options: {
   apiKey: string;
   model?: string;
@@ -132,6 +141,7 @@ export async function polishWithDeepSeek(options: {
   postTypeGuidance: string;
   formatGuidance: string;
   revisionNotes?: string;
+  signal?: AbortSignal;
 }): Promise<string> {
   const {
     apiKey,
@@ -144,6 +154,7 @@ export async function polishWithDeepSeek(options: {
     postTypeGuidance,
     formatGuidance,
     revisionNotes,
+    signal,
   } = options;
 
   const endpoint = `${baseUrl.replace(/\/$/, "")}/chat/completions`;
@@ -173,7 +184,8 @@ Reminder:
 - If a line sounds slogan-like, simplify it.
 - Do not force a question at the end.
 - End with 5-7 hashtags on a separate final line, including at least 2 audience hashtags (#SaaS, #Startups, #TechLeadership, #ProductDevelopment, #CTOs, #AITools) and at least 2 technical hashtags.
-- Aim for roughly 100-150 prose words so the final result stays safely inside the validator range.
+- HARD CAP: 130 prose words. Count before responding. If your draft exceeds 130 words, cut it before emitting the hashtag line. Posts longer than 150 words are auto-rejected.
+- The final line MUST be the hashtag line. Never end mid-sentence. If you are running long, drop sentences from the middle — never skip the hashtags.
 
 ${validatorChecklist}
 ${revisionNotes ? `\nREVISION NOTES:\n${revisionNotes}` : ""}`;
@@ -203,14 +215,34 @@ ${revisionNotes ? `\nREVISION NOTES:\n${revisionNotes}` : ""}`;
     requestBody.temperature = temperature;
   }
 
-  const res = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(requestBody),
-  });
+  // Hard per-call timeout. Vercel kills the function at 60s on Hobby, so a
+  // hung DeepSeek connection MUST not block us past our wall-clock budget.
+  // Caller may also pass a shorter `signal` derived from the remaining run budget.
+  const perCallTimeout = AbortSignal.timeout(resolveDeepSeekTimeoutMs());
+  const combinedSignal = signal
+    ? AbortSignal.any([signal, perCallTimeout])
+    : perCallTimeout;
+
+  let res: Response;
+  try {
+    res = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(requestBody),
+      signal: combinedSignal,
+    });
+  } catch (e) {
+    const err = e as Error & { name?: string };
+    if (err.name === "AbortError" || err.name === "TimeoutError") {
+      throw new Error(
+        `DeepSeek (${model}) timed out after ${resolveDeepSeekTimeoutMs()}ms. Lower DEEPSEEK_TIMEOUT_MS or check api.deepseek.com status.`,
+      );
+    }
+    throw e;
+  }
 
   let data: DeepSeekResponse;
   try {
@@ -230,8 +262,9 @@ ${revisionNotes ? `\nREVISION NOTES:\n${revisionNotes}` : ""}`;
 
   const message = data.choices?.[0]?.message;
   const text = message?.content?.trim();
+  const finishReason = data.choices?.[0]?.finish_reason;
+
   if (!text) {
-    const finishReason = data.choices?.[0]?.finish_reason;
     throw new Error(
       finishReason === "length"
         ? `DeepSeek (${model}) ran out of output tokens before producing the final post (max_tokens=${resolveMaxTokens(model)}). Lower DEEPSEEK_TEMPERATURE so it stops rambling, or raise DEEPSEEK_MAX_TOKENS.`
@@ -239,6 +272,18 @@ ${revisionNotes ? `\nREVISION NOTES:\n${revisionNotes}` : ""}`;
           ? `DeepSeek returned no final text (finish_reason=${finishReason})`
           : "DeepSeek returned empty text",
     );
+  }
+
+  // Truncated output is never useful: hashtags / closing question are always
+  // emitted last, so a `length` cutoff means the post is incomplete. Throw so
+  // the retry loop runs again with revision notes instead of accepting garbage.
+  if (finishReason === "length") {
+    const endsWithHashtags = /#\w+\s*$/.test(text);
+    if (!endsWithHashtags) {
+      throw new Error(
+        `DeepSeek (${model}) hit max_tokens (${resolveMaxTokens(model)}) before emitting hashtags. Raise DEEPSEEK_MAX_TOKENS or tighten the prompt.`,
+      );
+    }
   }
 
   return text;

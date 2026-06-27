@@ -71,7 +71,23 @@ function resolveGenerationMaxAttempts(): number {
   if (Number.isFinite(parsed) && parsed >= 1) {
     return Math.min(Math.floor(parsed), 10);
   }
-  return 5;
+  // Default lowered from 5 → 3 so we fit inside Vercel Hobby's 60s function cap
+  // even when DeepSeek is slow. Deterministic repair covers the long tail.
+  return 3;
+}
+
+/**
+ * Wall-clock budget for the whole run, in ms. We must leave ~15s headroom for
+ * the Buffer GraphQL call and JSON I/O after generation, so we cap generation
+ * at ~40s when the route's maxDuration is 60s.
+ */
+function resolveRunBudgetMs(): number {
+  const raw = process.env.RUN_BUDGET_MS?.trim();
+  const parsed = raw ? Number(raw) : NaN;
+  if (Number.isFinite(parsed) && parsed >= 10_000) {
+    return parsed;
+  }
+  return 40_000;
 }
 
 function resolveWordBounds(): { min: number; max: number } {
@@ -249,9 +265,11 @@ async function generateDeepSeekPost(options: {
   formatGuidance: string;
   runId: string;
   domain: DomainFocusSlug;
-}): Promise<{ text: string; attempts: number; lint: PostLintResult }> {
+  deadline: number;
+}): Promise<{ text: string; attempts: number; lint: PostLintResult; timedOut: boolean }> {
   const maxAttempts = resolveGenerationMaxAttempts();
   let attempts = 0;
+  let timedOut = false;
   let text = "";
   let lint: PostLintResult = {
     ok: false,
@@ -263,10 +281,21 @@ async function generateDeepSeekPost(options: {
   };
 
   while (attempts < maxAttempts) {
+    const remainingMs = options.deadline - Date.now();
+    if (remainingMs < 8_000) {
+      console.warn(
+        `[LinkedIn] Wall-clock budget exhausted before attempt ${attempts + 1}/${maxAttempts} (remaining=${remainingMs}ms). Bailing to deterministic repair.`,
+      );
+      timedOut = true;
+      break;
+    }
     attempts += 1;
 
+    const perAttemptMs = Math.max(5_000, remainingMs - 4_000);
+    const attemptSignal = AbortSignal.timeout(perAttemptMs);
+
     if (attempts === 1) {
-      text = await polishWithDeepSeek(options);
+      text = await polishWithDeepSeek({ ...options, signal: attemptSignal });
     } else {
       const revisionNotes = `The previous draft failed validation with these issues: ${lint.issues.join(
         "; ",
@@ -275,6 +304,7 @@ async function generateDeepSeekPost(options: {
         ...options,
         revisionNotes,
         draft: text,
+        signal: attemptSignal,
       });
     }
 
@@ -312,7 +342,7 @@ async function generateDeepSeekPost(options: {
     }
   }
 
-  return { text, attempts, lint };
+  return { text, attempts, lint, timedOut };
 }
 
 async function resolveContentEntropy(runId: string): Promise<{
@@ -423,6 +453,8 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
   const templateOnly =
     process.env.FORCE_TEMPLATE_ONLY === "true" || !deepseekKey;
 
+  const runStartedAt = Date.now();
+  const deadline = runStartedAt + resolveRunBudgetMs();
   const runId = randomUUID();
   const { entropy, domainSlug, postType } = await resolveContentEntropy(runId);
   const draftMeta = buildDraftPost(new Date(), entropy);
@@ -450,6 +482,7 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
         formatGuidance: draftMeta.formatGuidance,
         runId,
         domain: domainSlug,
+        deadline,
       });
       text = result.text;
       generationAttempts = result.attempts;
