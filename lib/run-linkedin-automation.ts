@@ -142,92 +142,195 @@ function normalizeWhitespace(value: string): string {
     .trim();
 }
 
-function wordsToSentenceCase(words: string[]): string {
-  const line = words.join(" ").trim();
-  if (!line) {
-    return "";
+/**
+ * Detect output that looks incoherent / word-salad. Word-chunking repairs used
+ * to publish posts containing things like "deployment winery" or "The fix flat
+ * e slow branching leads to possible but rare generation..." — that's worse
+ * than skipping a day. These heuristics catch the most damaging patterns.
+ *
+ * Returns a reason code if the prose looks incoherent, or null if it looks OK.
+ */
+function detectIncoherence(prose: string): string | null {
+  // Single-letter "words" outside of "I" and "a" (e.g. the orphan "e" in
+  // "The fix flat e slow branching...").
+  const singleLetters = prose.match(/\b(?![Ii]\b|[Aa]\b)[a-z]\b/g) ?? [];
+  if (singleLetters.length > 0) {
+    return `single_letter_tokens(${singleLetters.length})`;
   }
-  const normalized = line.replace(/\s+/g, " ");
-  const first = normalized.charAt(0).toUpperCase();
-  const rest = normalized.slice(1);
-  return /[.!?]$/.test(normalized) ? `${first}${rest}` : `${first}${rest}.`;
+  // Period directly followed by a capital letter without a space — sign of a
+  // sentence having been spliced into another (e.g. "Data.Halfway synced").
+  const jammed = prose.match(/[a-z]\.[A-Z]/g) ?? [];
+  if (jammed.length > 1) {
+    return `period_jamming(${jammed.length})`;
+  }
+  // Three or more "..." or repeated standalone hyphens — model dump indicator.
+  if (/\s---\s/.test(prose) || /\.{4,}/.test(prose)) {
+    return "stray_separators";
+  }
+  return null;
 }
 
-function deterministicRepairPost(text: string, domain: DomainFocusSlug): string {
+/**
+ * Reject sentences that look broken on their own, before they get assembled
+ * into a post. Used by sentence-based repair below.
+ */
+function looksLikeBrokenSentence(sentence: string): boolean {
+  const words = sentence.split(/\s+/).filter(Boolean);
+  if (words.length < 4 || words.length > 45) {
+    return true;
+  }
+  // Single-letter tokens (orphan "e", "s", etc.)
+  if (words.some((w) => /^[a-z]$/i.test(w.replace(/[.,!?;:]/g, "")) && w.toLowerCase() !== "a" && w.toLowerCase() !== "i")) {
+    return true;
+  }
+  // Ends in a function word (e.g. "manually or.").
+  const TRAILING_FUNCTION_WORDS = new Set([
+    "or", "and", "but", "the", "a", "an", "of", "to", "in", "on", "at",
+    "for", "with", "by", "as", "if", "is", "are", "was", "were", "be", "yes", "no",
+  ]);
+  const last = (words[words.length - 1] ?? "").replace(/[.,!?;:]$/, "").toLowerCase();
+  if (TRAILING_FUNCTION_WORDS.has(last)) {
+    return true;
+  }
+  // No vowels in a "word" longer than 2 chars — usually transcription noise.
+  if (words.some((w) => {
+    const stripped = w.replace(/[^a-zA-Z]/g, "");
+    return stripped.length > 2 && !/[aeiouy]/i.test(stripped);
+  })) {
+    return true;
+  }
+  return false;
+}
+
+export type RepairResult =
+  | { ok: true; text: string }
+  | { ok: false; reason: string };
+
+/**
+ * Sentence-aware repair: pick complete sentences from the model output that
+ * pass coherence heuristics, accumulate until we hit the word range, fix the
+ * hook + hashtags + question rules. NEVER synthesize text from word chunks —
+ * that approach (the prior implementation) published word-salad whenever the
+ * model rambled.
+ *
+ * Returns { ok: false } when the model output has no usable coherent content.
+ * The caller MUST treat that as "skip the day" rather than try to publish.
+ */
+function deterministicRepairPost(text: string, domain: DomainFocusSlug): RepairResult {
   const { min: wordMin, max: wordMax } = resolveWordBounds();
   const { min: hashMin, max: hashMax } = resolveHashtagBounds();
   const { prose, tagBlock } = splitProseAndHashtagBlock(normalizeWhitespace(text));
 
-  const sourceWords = prose.split(/\s+/).filter(Boolean);
-  const maxWords = Math.max(wordMin, wordMax);
-  const cappedWords = sourceWords.slice(0, maxWords);
-  let finalWords = cappedWords;
-  if (finalWords.length < wordMin) {
-    const filler =
-      "I traced it with AWS Lambda logs, CloudWatch alarms, and Postgres query patterns before changing the rollout path.";
-    finalWords = [...finalWords, ...filler.split(/\s+/)].slice(0, maxWords);
+  // Up-front coherence check on the raw model prose. If the raw output is
+  // obviously broken, no amount of sentence picking will save it.
+  const incoherent = detectIncoherence(prose);
+  if (incoherent) {
+    return { ok: false, reason: `incoherent_source(${incoherent})` };
   }
 
-  const chunks: string[] = [];
-  for (let i = 0; i < finalWords.length; i += 38) {
-    chunks.push(wordsToSentenceCase(finalWords.slice(i, i + 38)));
+  const sentences = prose
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const goodSentences = sentences.filter((s) => !looksLikeBrokenSentence(s));
+  if (goodSentences.length === 0) {
+    return { ok: false, reason: "no_usable_sentences" };
   }
 
-  if (chunks.length === 0) {
-    chunks.push(
-      "One production issue kept repeating in real customer traffic that staging never surfaced.",
+  // Pick sentences in order until word count reaches [wordMin, wordMax].
+  const picked: string[] = [];
+  let words = 0;
+  for (const s of goodSentences) {
+    const w = s.split(/\s+/).filter(Boolean).length;
+    if (words + w > wordMax) {
+      // Adding this sentence would overflow. If we're already at wordMin, stop;
+      // otherwise skip and try the next (shorter) sentence.
+      if (words >= wordMin) break;
+      continue;
+    }
+    picked.push(s);
+    words += w;
+    if (words >= wordMin) {
+      // We have enough; one more sentence is OK but not required.
+      break;
+    }
+  }
+
+  if (words < wordMin || picked.length === 0) {
+    return { ok: false, reason: `insufficient_coherent_text(${words}/${wordMin})` };
+  }
+
+  // Hook rule: first sentence MUST NOT start with "I " (lint check) and SHOULD
+  // satisfy hasStrongHook (separate lint check). If the first picked sentence
+  // fails, search for a replacement among the remaining good sentences.
+  if (/^I\s/i.test(picked[0]!) || !hasStrongHook(picked[0]!)) {
+    const replacementIdx = goodSentences.findIndex(
+      (s) => !picked.includes(s) && !/^I\s/i.test(s) && hasStrongHook(s),
     );
+    if (replacementIdx >= 0) {
+      const replacement = goodSentences[replacementIdx]!;
+      const replacementWords = replacement.split(/\s+/).filter(Boolean).length;
+      const firstWords = picked[0]!.split(/\s+/).filter(Boolean).length;
+      // Only swap if the budget still fits after the swap.
+      if (words - firstWords + replacementWords <= wordMax) {
+        picked.unshift(replacement);
+        picked.splice(1, 1); // drop the original first
+        words = words - firstWords + replacementWords;
+      } else {
+        // Fall back to a quick prepend that satisfies both rules.
+        picked.unshift("Most teams hit this same wall in production.");
+        words += 7;
+      }
+    } else {
+      // No coherent alternative — prepend a safe hook sentence.
+      picked.unshift("Most teams hit this same wall in production.");
+      words += 7;
+    }
   }
 
-  // Hook rule 1: must satisfy hasStrongHook.
-  // Hook rule 2: opening line MUST NOT start with "I " (lint rejects this independently).
-  // Both checks must pass — previously only #1 was enforced here, which meant a
-  // model output like "I caught a strange bug…" could pass hasStrongHook but
-  // still fail the ^I\s rule, falling back to the original (untrimmed) text.
-  const startsWithI = /^I\s/i.test(chunks[0] ?? "");
-  if (!hasStrongHook(chunks[0] ?? "") || startsWithI) {
-    const stripped = (chunks[0] ?? "").replace(/^I\s+/i, "").replace(/\.$/, "");
-    chunks[0] = startsWithI
-      ? `One production issue kept repeating: ${stripped.charAt(0).toLowerCase()}${stripped.slice(1)}.`
-      : `One production issue kept repeating: ${stripped}.`;
+  // If we accidentally went over wordMax with the hook prepend, drop sentences
+  // from the tail until we fit.
+  while (words > wordMax && picked.length > 1) {
+    const last = picked.pop()!;
+    words -= last.split(/\s+/).filter(Boolean).length;
   }
 
-  const repairedProse = chunks.join("\n\n");
-  const linted = lintLinkedInPost(`${repairedProse}\n\n${tagBlock}`.trim());
-  const issueHashtagsMissing = linted.issues.some((i) => i.toLowerCase().includes("hashtag"));
-  const issueStackMissing = linted.issues.some((i) => i.toLowerCase().includes("stack element"));
-  const issueDense = linted.issues.some((i) => i.toLowerCase().includes("too dense"));
+  let repairedProse = picked.join("\n\n");
 
-  const proseWithStack = issueStackMissing
-    ? `${repairedProse}\n\nI validated the fix by checking CloudWatch logs, Lambda retries, and Postgres writes.`
-    : repairedProse;
-
-  const proseNoDense = issueDense
-    ? proseWithStack
-      .split(/\n\s*\n/)
-      .flatMap((p) => p.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean))
-      .join("\n\n")
-    : proseWithStack;
-
+  // Hashtag handling: prefer the model's hashtags if they pass the rules,
+  // otherwise build a domain-appropriate fallback. Cap at hashMax.
   const existingTags = extractHashtags(tagBlock);
   const fallbackTags = domainHashtags(domain);
   const combinedTags = [...existingTags, ...fallbackTags]
     .filter((tag, index, arr) => arr.indexOf(tag) === index)
     .slice(0, hashMax);
   const minHashtags = Math.max(0, hashMin);
-  const finalTags = (issueHashtagsMissing || combinedTags.length < minHashtags)
-    ? [...domainHashtags(domain)].slice(0, Math.max(minHashtags, Math.min(hashMax, 6)))
-    : combinedTags;
+  const finalTags = combinedTags.length >= minHashtags
+    ? combinedTags
+    : [...domainHashtags(domain)].slice(0, Math.max(minHashtags, Math.min(hashMax, 6)));
 
-  // Question rule: the lint requires a `?` anywhere in the post. Truncating to
-  // wordMax can drop the model's closing question, so append a generic one when
-  // the prose has none. Inserted before the hashtag line to keep formatting.
-  const proseWithQuestion = /\?/.test(proseNoDense)
-    ? proseNoDense
-    : `${proseNoDense.trim()}\n\nWhat caught your team off guard the last time you shipped this kind of change?`;
+  // Question rule: post must contain a `?`. Append a generic one if missing.
+  if (!/\?/.test(repairedProse)) {
+    repairedProse += `\n\nWhat caught your team off guard the last time you shipped this kind of change?`;
+  }
 
   const hashtagLine = finalTags.join(" ").trim();
-  return hashtagLine ? `${proseWithQuestion.trim()}\n\n${hashtagLine}` : proseWithQuestion.trim();
+  const finalText = hashtagLine
+    ? `${repairedProse.trim()}\n\n${hashtagLine}`
+    : repairedProse.trim();
+
+  // Final lint check + final coherence check. If either fails, refuse to publish.
+  const finalLint = lintLinkedInPost(finalText);
+  if (!finalLint.ok) {
+    return { ok: false, reason: `lint_still_failing(${finalLint.issues.slice(0, 2).join(" | ")})` };
+  }
+  const finalIncoherence = detectIncoherence(repairedProse);
+  if (finalIncoherence) {
+    return { ok: false, reason: `repair_introduced_incoherence(${finalIncoherence})` };
+  }
+
+  return { ok: true, text: finalText };
 }
 
 /**
@@ -560,26 +663,38 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
   const bannedHits = lintBannedPhrases(text);
 
   let lint = lintLinkedInPost(text);
+  let repairReason: string | undefined;
   if (!lint.ok && source === "deepseek") {
-    const repaired = deterministicRepairPost(text, domainSlug);
-    const repairedLint = lintLinkedInPost(repaired);
-    if (repairedLint.ok) {
-      text = repaired;
-      lint = repairedLint;
+    const repair = deterministicRepairPost(text, domainSlug);
+    if (repair.ok) {
+      text = repair.text;
+      lint = lintLinkedInPost(text);
+    } else {
+      repairReason = repair.reason;
     }
   }
   if (!lint.ok) {
     const maxAttempts = resolveGenerationMaxAttempts();
+    // Philosophy change: when DeepSeek's output is unsalvageable, we SKIP the
+    // run rather than synthesize a publishable-but-incoherent post. The cost
+    // of missing one cron is a fraction of the cost of putting word-salad in
+    // front of the founders/CTOs we're trying to win.
+    const reason = repairReason
+      ? ("coherence_check_failed" as const)
+      : ("max_retries_exhausted" as const);
     return Response.json(
       {
         ok: false,
-        reason: "max_retries_exhausted" as const,
-        error:
-          "Post rejected: does not meet LinkedIn rules (hashtags, word count, hook, etc.).",
+        reason,
+        error: repairReason
+          ? `Skipped: deterministic repair could not produce a coherent post (${repairReason}).`
+          : "Post rejected: does not meet LinkedIn rules (hashtags, word count, hook, etc.).",
         issues: lint.issues,
         lint,
         source,
         attempts: generationAttempts || maxAttempts,
+        skipped: Boolean(repairReason),
+        llm_error: llmError,
       },
       { status: 422 },
     );
