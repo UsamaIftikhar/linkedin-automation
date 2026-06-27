@@ -695,6 +695,10 @@ export async function runLinkedInAutomation(postNow: boolean): Promise<Response>
         attempts: generationAttempts || maxAttempts,
         skipped: Boolean(repairReason),
         llm_error: llmError,
+        // Diagnostic: surface the full DeepSeek output (or template draft) when we
+        // refuse to publish, so we can debug WHY the model is producing garbage.
+        // Safe to expose because this endpoint is auth-gated by POST_API_SECRET.
+        model_output: text,
       },
       { status: 422 },
     );
