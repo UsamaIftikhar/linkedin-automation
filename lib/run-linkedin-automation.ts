@@ -175,12 +175,21 @@ function deterministicRepairPost(text: string, domain: DomainFocusSlug): string 
 
   if (chunks.length === 0) {
     chunks.push(
-      "I hit this in production while tracing an API path through AWS Lambda, CloudWatch, and Postgres.",
+      "One production issue kept repeating in real customer traffic that staging never surfaced.",
     );
   }
 
-  if (!hasStrongHook(chunks[0] ?? "")) {
-    chunks[0] = `One production issue kept repeating: ${(chunks[0] ?? "").replace(/\.$/, "")}.`;
+  // Hook rule 1: must satisfy hasStrongHook.
+  // Hook rule 2: opening line MUST NOT start with "I " (lint rejects this independently).
+  // Both checks must pass — previously only #1 was enforced here, which meant a
+  // model output like "I caught a strange bug…" could pass hasStrongHook but
+  // still fail the ^I\s rule, falling back to the original (untrimmed) text.
+  const startsWithI = /^I\s/i.test(chunks[0] ?? "");
+  if (!hasStrongHook(chunks[0] ?? "") || startsWithI) {
+    const stripped = (chunks[0] ?? "").replace(/^I\s+/i, "").replace(/\.$/, "");
+    chunks[0] = startsWithI
+      ? `One production issue kept repeating: ${stripped.charAt(0).toLowerCase()}${stripped.slice(1)}.`
+      : `One production issue kept repeating: ${stripped}.`;
   }
 
   const repairedProse = chunks.join("\n\n");
@@ -210,8 +219,15 @@ function deterministicRepairPost(text: string, domain: DomainFocusSlug): string 
     ? [...domainHashtags(domain)].slice(0, Math.max(minHashtags, Math.min(hashMax, 6)))
     : combinedTags;
 
+  // Question rule: the lint requires a `?` anywhere in the post. Truncating to
+  // wordMax can drop the model's closing question, so append a generic one when
+  // the prose has none. Inserted before the hashtag line to keep formatting.
+  const proseWithQuestion = /\?/.test(proseNoDense)
+    ? proseNoDense
+    : `${proseNoDense.trim()}\n\nWhat caught your team off guard the last time you shipped this kind of change?`;
+
   const hashtagLine = finalTags.join(" ").trim();
-  return hashtagLine ? `${proseNoDense.trim()}\n\n${hashtagLine}` : proseNoDense.trim();
+  return hashtagLine ? `${proseWithQuestion.trim()}\n\n${hashtagLine}` : proseWithQuestion.trim();
 }
 
 /**
