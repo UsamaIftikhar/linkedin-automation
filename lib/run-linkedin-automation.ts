@@ -24,7 +24,7 @@ import {
 } from "@/lib/linkedin-post-rules";
 import { appendPostMemory, loadPostMemory } from "@/lib/post-memory";
 import { PipelineLogger, textFingerprint } from "@/lib/pipeline-log";
-import { reviewPostCoherence } from "@/lib/post-reviewer";
+import { reviewPostCoherence, reviewerConfigured } from "@/lib/post-reviewer";
 import {
   pickPostType,
   postTypeGuidance,
@@ -499,6 +499,16 @@ async function tryAcceptWithReview(
     return { accepted: false, reviewIncoherent: false, reviewIssues: [] };
   }
 
+  if (!reviewerConfigured()) {
+    ctx.pipelineLog.step(`${ctx.stepPrefix}.semantic`, {
+      attempt: ctx.attempt,
+      skipped: true,
+      passed: true,
+    });
+    ctx.pipelineLog.step("deepseek.generation_success", { attempt: ctx.attempt });
+    return { accepted: true, reviewIncoherent: false, reviewIssues: [] };
+  }
+
   const review = await reviewPostCoherence({
     postText: candidateText,
     signal: ctx.signal,
@@ -904,6 +914,7 @@ export async function runLinkedInAutomation(
     runBudgetMs: resolveRunBudgetMs(),
     deepseekTimeoutMs: process.env.DEEPSEEK_TIMEOUT_MS ?? "25000",
     maxTokens: process.env.DEEPSEEK_MAX_TOKENS ?? "900(default)",
+    semanticReviewEnabled: reviewerConfigured(),
   });
 
   const { entropy, domainSlug, postType } = await resolveContentEntropy(runId);
@@ -1025,7 +1036,7 @@ export async function runLinkedInAutomation(
         issues: lint.issues,
         fingerprint: textFingerprint(text),
       });
-      if (lint.ok && deepseekKey) {
+      if (lint.ok && deepseekKey && reviewerConfigured()) {
         const finalReview = await reviewPostCoherence({
           postText: text,
         });

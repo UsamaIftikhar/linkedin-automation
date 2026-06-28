@@ -3,7 +3,17 @@ export type ReviewResult = {
   readable: boolean;
   professional: boolean;
   issues: string[];
+  /** Reviewer could not run (missing key, API/parse error) — not a content rejection. */
+  unavailable?: boolean;
 };
+
+export function reviewerConfigured(): boolean {
+  return Boolean(process.env.ANTHROPIC_API_KEY?.trim());
+}
+
+export function isReviewerUnavailable(review: ReviewResult): boolean {
+  return review.unavailable === true;
+}
 
 const REVIEWER_SYSTEM_PROMPT = `You are a strict quality reviewer for LinkedIn posts. You will receive a post draft. Read EVERY sentence carefully and judge whether it actually means something a human wrote intentionally.
 
@@ -45,6 +55,7 @@ function failClosed(reason: string): ReviewResult {
     readable: false,
     professional: false,
     issues: [reason],
+    unavailable: true,
   };
 }
 
@@ -100,5 +111,5 @@ export async function reviewPostCoherence(options: {
   if (!parsed) {
     return failClosed("reviewer returned unparseable JSON — failing closed");
   }
-  return parsed;
+  return { ...parsed, unavailable: false };
 }

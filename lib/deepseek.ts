@@ -244,7 +244,7 @@ ${revisionNotes ? `\nREVISION NOTES (this is a retry — fix exactly these issue
   });
   pipelineLog?.snapshot("deepseek.draft_input", draft, "draft_sent_in_user_prompt", {
     attempt,
-    draftSource: revisionNotes ? "previous_model_output" : "pillar_template",
+    draftSource: "pillar_template",
   });
 
   const isReasoningModel = model === "deepseek-reasoner";
